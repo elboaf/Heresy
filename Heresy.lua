@@ -2,13 +2,14 @@
 Heresy = {}
 
 local master_buff = false
-local master_heal = false
 local master_drink = false
+local master_follow = false
 
 -- Global variables for configuration
 local isDrinkingMode = false
 local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at 80% mana
-local EMERGENCY_HEALTH_THRESHOLD = 30 -- Heal party members below 30% health even while drinking
+local START_DRINKING_MANA_THRESHOLD = 50 -- Stop drinking at 80% mana
+local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below 30% health even while drinking
 local HEALTH_THRESHOLD = 70 -- Heal if health is below 70%
 local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
 local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
@@ -49,6 +50,7 @@ local lastFlayTime = 0
 
 local drinkstodrink = {
     "Sweet",
+    "Melon",
 }
 
 -- List of debuffs to dispel with Dispel Magic
@@ -111,6 +113,7 @@ end
 local function CheckDrinkBuff()
     if not HasBuff("player", drinkBuffs) then
         isDrinkingMode = false
+        master_drink = false
         --print("Heresy: drink buff not found, setting drink mode false")
     end
 end
@@ -367,7 +370,7 @@ local function HealParty()
     else
         -- Normal healing logic (not in drinking mode)
         local lowestHealthUnit = nil
-        local lowestHealthPercent = 90
+        local lowestHealthPercent = HEALTH_THRESHOLD
 
         -- Check player health
         if not UnitIsDeadOrGhost("player") and IsUnitInRange("player") then
@@ -437,6 +440,7 @@ local function AssistPartyMember()
                     if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) > 1 and (currentTime - lastFlayTime) >= FLAY_DURATION then
                         ToggleShootOff()
                         CastSpellByName(SPELL_MIND_FLAY)
+                        master_follow = false
                         lastFlayTime = currentTime
                         lastShootToggleTime = currentTime
                         return
@@ -457,6 +461,11 @@ end
 
 -- Function to follow a party member
 local function FollowPartyMember()
+    if not master_follow then
+        FollowByName("Rele", exactMatch)
+        master_follow = true
+    end
+
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
     if mana > DRINKING_MANA_THRESHOLD then
         master_drink = false
@@ -478,6 +487,7 @@ local function FollowPartyMember()
 
     if not isDrinkingMode and not master_drink then
         FollowByName("Rele", exactMatch)
+        master_follow = true
         -- print("Heresy: following executed")
     end
 
@@ -529,7 +539,10 @@ local function OOM()
         return false
     end
 
-    if mana > LOW_MANA_THRESHOLD and mana < DRINKING_MANA_THRESHOLD and not UnitAffectingCombat("player") then
+    if mana > LOW_MANA_THRESHOLD and mana < START_DRINKING_MANA_THRESHOLD and not UnitAffectingCombat("player") then
+        if master_buff then
+            return
+        end
         if not HasBuff("player", drinkBuffs) then
             -- SendChatMessage("Heresy: LOW MANA -- Drinking...", "PARTY")
             for b = 0, 4 do
@@ -614,8 +627,10 @@ SlashCmdList["HERESY"] = function()
             if not UnitAffectingCombat("player") then
                 BuffParty()
                 BuffInnerFire()
-                FollowPartyMember()
             end
+
+            FollowPartyMember()
+
 
 
         if assistmode == 1 then
