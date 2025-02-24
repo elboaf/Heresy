@@ -6,3 +6,4 @@
 ## SavedVariables: HeresyDB
 
 Heresy.lua
+libs/QuickHealPriest.lua

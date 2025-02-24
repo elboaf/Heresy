@@ -1,6 +1,11 @@
 -- Addon Name
 Heresy = {}
 
+-- Add a global variable to track drinking mode
+local isDrinkingMode = false
+local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at 80% mana
+local EMERGENCY_HEALTH_THRESHOLD = 30 -- Heal party members below 30% health even while drinking
+
 local assistmode = 0
 
 -- Addon Constants
@@ -63,6 +68,7 @@ local debuffsToDispel = {
     "Immolation",
     "Sleep",
     "FrostNova",
+    "FlameShock",
     -- Add more debuff names here as needed
 }
 
@@ -120,17 +126,25 @@ local function GetSpellIndex(spellName)
     return nil
 end
 
--- Function to buff a unit with Power Word: Fortitude if they are not already buffed
+-- Helper function to check if a unit is within buffing range
+local function IsUnitInRange(unit)
+    -- CheckInteractDistance returns true if the unit is within 40 yards (index 4)
+    return CheckInteractDistance(unit, 4)
+end
+
+-- Function to buff a unit with Power Word: Fortitude if they are not already buffed and are in range
 local function BuffUnit(unit)
-    if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and not buffed(SPELL_PWF, unit) then
-        CastSpellByName(SPELL_PWF)
-        SpellTargetUnit(unit)
-        return true
-    end
-    if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and not buffed(SPELL_SPIRIT, unit) then
-        CastSpellByName(SPELL_SPIRIT)
-        SpellTargetUnit(unit)
-        return true
+    if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
+        if not buffed(SPELL_PWF, unit) then
+            CastSpellByName(SPELL_PWF)
+            SpellTargetUnit(unit)
+            return true
+        end
+        if not buffed(SPELL_SPIRIT, unit) then
+            CastSpellByName(SPELL_SPIRIT)
+            SpellTargetUnit(unit)
+            return true
+        end
     end
     return false
 end
@@ -142,7 +156,7 @@ local function IsBuffingComplete()
         return false
     end
 
-    -- Check if party members are buffed
+    -- Check if party members are buffed and in range
     for i = 1, 4 do
         local partyMember = "party" .. i
         if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
@@ -182,8 +196,14 @@ local function BuffInnerFire()
     end
 end
 
--- Function to buff party members and myself with Power Word: Fortitude
 local function BuffParty()
+    local mana = (UnitMana("player") / UnitManaMax("player")) * 100
+
+    -- Skip buffing if mana is 10% or less or if currently drinking
+    if mana <= 10 or HasBuff("player", drinkBuffs) then
+        return
+    end
+
     -- Buff myself first
     if BuffUnit("player") then
         return
@@ -246,48 +266,102 @@ local function CureDiseaseParty()
     end
 end
 
--- Function to heal the lowest health party member (including myself) using QuickHeal logic
+-- healparty function
 local function HealParty()
-    local lowestHealthUnit = nil
-    local lowestHealthPercent = 100
+    local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-    -- Check player's health
-    if not UnitIsDeadOrGhost("player") then
-        local playerHealth = UnitHealth("player") / UnitHealthMax("player") * 100
-        if playerHealth < lowestHealthPercent then
-            lowestHealthUnit = "player"
-            lowestHealthPercent = playerHealth
+    -- If in drinking mode, only interrupt for emergency healing or if mana is above 80%
+    if isDrinkingMode then
+        -- Check if mana is above 80%, and if so, disable drinking mode
+        if mana >= DRINKING_MANA_THRESHOLD then
+            isDrinkingMode = false
+            return false -- No healing was needed
         end
-    end
 
-    -- Check party members' health
-    for i = 1, 4 do
-        local partyMember = "party" .. i
-        if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
-            local health = UnitHealth(partyMember) / UnitHealthMax(partyMember) * 100
-            if health < lowestHealthPercent then
-                lowestHealthUnit = partyMember
-                lowestHealthPercent = health
+        -- Check for emergency healing (party members below 30% health)
+        local lowestHealthUnit = nil
+        local lowestHealthPercent = 100
+
+        -- Check player's health
+        if not UnitIsDeadOrGhost("player") and IsUnitInRange("player") then
+            local playerHealth = UnitHealth("player") / UnitHealthMax("player") * 100
+            if playerHealth < lowestHealthPercent then
+                lowestHealthUnit = "player"
+                lowestHealthPercent = playerHealth
             end
         end
-    end
 
-    -- Heal the lowest health unit based on thresholds
-    if lowestHealthUnit then
-        local healneed = UnitHealthMax(lowestHealthUnit) - UnitHealth(lowestHealthUnit)
-        local Health = UnitHealth(lowestHealthUnit) / UnitHealthMax(lowestHealthUnit)
-
-        -- Get the appropriate healing spell based on QuickHeal logic
-        local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
-
-        if SpellID then
-            CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
-            SpellTargetUnit(lowestHealthUnit)
-            return true
+        -- Check party members' health
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) and IsUnitInRange(partyMember) then
+                local health = UnitHealth(partyMember) / UnitHealthMax(partyMember) * 100
+                if health < lowestHealthPercent then
+                    lowestHealthUnit = partyMember
+                    lowestHealthPercent = health
+                end
+            end
         end
-    end
 
-    return false -- No healing was needed
+        -- Only heal if the lowest health unit is below the emergency threshold
+        if lowestHealthUnit and lowestHealthPercent < EMERGENCY_HEALTH_THRESHOLD then
+            local healneed = UnitHealthMax(lowestHealthUnit) - UnitHealth(lowestHealthUnit)
+            local Health = UnitHealth(lowestHealthUnit) / UnitHealthMax(lowestHealthUnit)
+
+            -- Get the appropriate healing spell based on QuickHeal logic
+            local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
+
+            if SpellID then
+                CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
+                SpellTargetUnit(lowestHealthUnit)
+                return true
+            end
+        end
+
+        return false -- No healing was needed
+    else
+        -- If not in drinking mode, proceed with normal healing logic
+        local lowestHealthUnit = nil
+        local lowestHealthPercent = 100
+
+        -- Check player's health
+        if not UnitIsDeadOrGhost("player") and IsUnitInRange("player") then
+            local playerHealth = UnitHealth("player") / UnitHealthMax("player") * 100
+            if playerHealth < lowestHealthPercent then
+                lowestHealthUnit = "player"
+                lowestHealthPercent = playerHealth
+            end
+        end
+
+        -- Check party members' health
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) and IsUnitInRange(partyMember) then
+                local health = UnitHealth(partyMember) / UnitHealthMax(partyMember) * 100
+                if health < lowestHealthPercent then
+                    lowestHealthUnit = partyMember
+                    lowestHealthPercent = health
+                end
+            end
+        end
+
+        -- Heal the lowest health unit based on thresholds
+        if lowestHealthUnit then
+            local healneed = UnitHealthMax(lowestHealthUnit) - UnitHealth(lowestHealthUnit)
+            local Health = UnitHealth(lowestHealthUnit) / UnitHealthMax(lowestHealthUnit)
+
+            -- Get the appropriate healing spell based on QuickHeal logic
+            local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
+
+            if SpellID then
+                CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
+                SpellTargetUnit(lowestHealthUnit)
+                return true
+            end
+        end
+
+        return false -- No healing was needed
+    end
 end
 
 -- Function to assist a party member by casting Smite on their target
@@ -318,16 +392,16 @@ local function AssistPartyMember()
                         return -- Exit after casting Mind Blast
                     end
                 end
-                -- Cast Mind Blast if mana > 80, Shadow Word: Pain is on the target, and Mind Blast is off cooldown
+                -- Cast Mind Flay if mana > 80, Shadow Word: Pain is on the target, and Mind Blast is on cooldown
                 if mana > 75 and buffed(SPELL_SWP, target) then
                     local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
                     if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) > 1 and (currentTime - lastFlayTime) >= flayDuration then
-                        -- Toggle Shoot off before casting Mind Blast
+                        -- Toggle Shoot off before casting Mind Flay
                         ToggleShootOff()
                         CastSpellByName(SPELL_MIND_FLAY)
                         lastFlayTime = currentTime
                         lastShootToggleTime = currentTime -- Reset the timer
-                        return -- Exit after casting Mind Blast
+                        return -- Exit after casting Mind Flay
                     end
                 end
 
@@ -353,26 +427,26 @@ local function FollowPartyMember()
     end
 
     -- If not drinking, proceed to follow a party member
-    --for i = 1, 4 do
-        --local partyMember = "party" .. i
-        --if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
-            FollowByName("Rele", exactMatch)
-            --return
-        --end
-    --end
+    FollowByName("Rele", exactMatch)
 end
 
 -- Add a flag to track if the drinking announcement has been made during the current combat
 local hasAnnouncedDrinking = false
 
--- Function to handle out-of-mana situations
+-- oom function
 local function OOM()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-    -- Only drink if buffing is complete, mana is low, and the player is not already drinking
-    if not UnitAffectingCombat("player") and mana < 70 and IsBuffingComplete() then
+    -- If in drinking mode, only stop drinking if mana is above 80%
+    if isDrinkingMode and mana >= DRINKING_MANA_THRESHOLD then
+        isDrinkingMode = false
+        return
+    end
+
+    -- If mana is critically low (below 10%), drink immediately without checking buffing
+    if mana <= 10 and not UnitAffectingCombat("player") then
         if not HasBuff("player", drinkBuffs) then
-            SendChatMessage("Heresy: LOW MANA -- Drinking...", "PARTY")
+            --SendChatMessage("Heresy: CRITICALLY LOW MANA -- Drinking immediately...", "PARTY")
             for b = 0, 4 do
                 for s = 1, GetContainerNumSlots(b) do
                     local itemLink = GetContainerItemLink(b, s)
@@ -380,8 +454,29 @@ local function OOM()
                         for _, drink in ipairs(drinkstodrink) do
                             if strfind(itemLink, drink) then
                                 UseContainerItem(b, s)
+                                isDrinkingMode = true -- Enable drinking mode
+                                return -- Exit the function after starting to drink
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
 
-                                break -- Exit the inner loop once a match is found
+    -- If mana is low but not critically low (10% < mana < 70%), check if buffing is complete before drinking
+    if mana > 10 and mana < 70 and not UnitAffectingCombat("player") and IsBuffingComplete() then
+        if not HasBuff("player", drinkBuffs) then
+            --SendChatMessage("Heresy: LOW MANA -- Drinking...", "PARTY")
+            for b = 0, 4 do
+                for s = 1, GetContainerNumSlots(b) do
+                    local itemLink = GetContainerItemLink(b, s)
+                    if itemLink then
+                        for _, drink in ipairs(drinkstodrink) do
+                            if strfind(itemLink, drink) then
+                                UseContainerItem(b, s)
+                                isDrinkingMode = true -- Enable drinking mode
+                                return -- Exit the function after starting to drink
                             end
                         end
                     end
@@ -410,7 +505,7 @@ local function OOM()
 
     -- Announce drinking requirement after combat if mana is low and the announcement hasn't been made yet
     if UnitAffectingCombat("player") and mana < 40 and not hasAnnouncedDrinking then
-        SendChatMessage("Heresy: LOW MANA -- I need to drink after combat!", "PARTY")
+        SendChatMessage(">> LOW MANA << I need to drink after combat!", "PARTY")
         hasAnnouncedDrinking = true -- Set the flag to prevent repeated announcements
     end
 end
@@ -439,25 +534,30 @@ SlashCmdList["HERESY_ASSIST"] = function()
     end
 end
 
--- Slash command to trigger all functionality
+-- main heresey slash command
 SLASH_HERESY1 = "/heresy"
 SlashCmdList["HERESY"] = function()
     -- Check if healing is needed
     local healingNeeded = HealParty()
-    DispelParty()
-    CureDiseaseParty()
+
+    -- Always check for low mana and drink if necessary
+    OOM()
 
     -- If no healing is needed, proceed to buff and assist
     if not healingNeeded then
-        if not UnitAffectingCombat("player") then
-            BuffParty()
+        local mana = (UnitMana("player") / UnitManaMax("player")) * 100
+
+        -- Skip buffing if mana is 10% or less or if currently drinking
+        if mana > 10 and not HasBuff("player", drinkBuffs) then
+            if not UnitAffectingCombat("player") then
+                BuffParty()
+            end
+            BuffInnerFire()
+            FollowPartyMember()
         end
-        BuffInnerFire()
+
         if assistmode == 1 then
             AssistPartyMember()
         end
     end
-
-    FollowPartyMember()
-    OOM()
 end
