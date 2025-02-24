@@ -1,0 +1,8 @@
+## Interface: 11403
+## Title: Heresy
+## Notes: A priest helper addon for World of Warcraft.
+## Author: Elboaf
+## Version: 1.0.1
+## SavedVariables: HeresyDB
+
+Heresy.lua
