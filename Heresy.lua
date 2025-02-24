@@ -199,8 +199,8 @@ end
 local function BuffParty()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-    -- Skip buffing if mana is 10% or less or if currently drinking
-    if mana <= 10 or HasBuff("player", drinkBuffs) then
+    -- Skip buffing if mana is 10% or less
+    if mana <= 10 then
         return
     end
 
@@ -547,8 +547,8 @@ SlashCmdList["HERESY"] = function()
     if not healingNeeded then
         local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-        -- Skip buffing if mana is 10% or less or if currently drinking
-        if mana > 10 and not HasBuff("player", drinkBuffs) then
+        -- Skip buffing if mana is 10% or less
+        if mana > 10 then
             if not UnitAffectingCombat("player") then
                 BuffParty()
             end
