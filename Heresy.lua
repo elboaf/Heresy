@@ -1,10 +1,20 @@
 -- Addon Name
 Heresy = {}
 
--- Add a global variable to track drinking mode
+local master_buff = false
+local master_heal = false
+local master_drink = false
+
+-- Global variables for configuration
 local isDrinkingMode = false
 local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at 80% mana
 local EMERGENCY_HEALTH_THRESHOLD = 30 -- Heal party members below 30% health even while drinking
+local HEALTH_THRESHOLD = 70 -- Heal if health is below 70%
+local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
+local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
+local MANA_ANNOUNCEMENT_THRESHOLD = 40 -- Threshold for announcing low mana
+local SHOOT_TOGGLE_COOLDOWN = 1.5 -- Toggle Shoot off after 1.5 seconds
+local FLAY_DURATION = 3 -- Duration for Mind Flay
 
 local assistmode = 0
 
@@ -32,30 +42,10 @@ local SPELL_PSCREAM = "Psychic Scream"
 local SPELL_INNER_FIRE = "Inner Fire"
 local SPELL_DISPEL = "Dispel Magic"
 local SPELL_CURE_DISEASE = "Cure Disease"
-local HEALTH_THRESHOLD = 70 -- Heal if health is below 70%
 
 -- Timing variables for Shoot toggle
 local lastShootToggleTime = 0
-local shootToggleCooldown = 1.5 -- Toggle Shoot off after 8 seconds
 local lastFlayTime = 0
-local flayDuration = 3
-
--- Function to check if Shoot is active
-local function IsShootActive()
-    for i = 1, 120 do
-        if IsAutoRepeatAction(i) then
-            return true
-        end
-    end
-    return false
-end
-
--- Function to toggle Shoot off
-local function ToggleShootOff()
-    if IsShootActive() then
-        CastSpellByName(SPELL_SHOOT) -- Toggle Shoot off
-    end
-end
 
 local drinkstodrink = {
     "Sweet",
@@ -87,7 +77,6 @@ local drinkBuffs = {
     -- Add more partial patterns as needed
 }
 
-
 -- Helper function to check if a unit has a specific debuff
 local function HasDebuff(unit, debuffList)
     for i = 1, 16 do
@@ -118,12 +107,11 @@ local function HasBuff(unit, BuffList)
     return false
 end
 
--- helper function to Check for Drink Buffs
+-- Helper function to check for Drink Buffs
 local function CheckDrinkBuff()
     if not HasBuff("player", drinkBuffs) then
         isDrinkingMode = false
-      --  SendChatMessage("Heresy: checkdrinkbuff isdrinking false", "PARTY")
-
+        --print("Heresy: drink buff not found, setting drink mode false")
     end
 end
 
@@ -140,39 +128,61 @@ end
 
 -- Helper function to check if a unit is within buffing range
 local function IsUnitInRange(unit)
-    -- CheckInteractDistance returns true if the unit is within 40 yards (index 4)
     return CheckInteractDistance(unit, 4)
 end
 
--- Function to buff a unit with Power Word: Fortitude if they are not already buffed and are in range
-local function BuffUnit(unit)
-    if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
-        if not buffed(SPELL_PWF, unit) then
-            CastSpellByName(SPELL_PWF)
-            SpellTargetUnit(unit)
-            return true
-        end
-        if not buffed(SPELL_SPIRIT, unit) then
-            CastSpellByName(SPELL_SPIRIT)
-            SpellTargetUnit(unit)
+-- Function to check if Shoot is active
+local function IsShootActive()
+    for i = 1, 120 do
+        if IsAutoRepeatAction(i) then
             return true
         end
     end
     return false
 end
 
+-- Function to toggle Shoot off
+local function ToggleShootOff()
+    if IsShootActive() then
+        CastSpellByName(SPELL_SHOOT) -- Toggle Shoot off
+    end
+end
+
+-- Helper function to buff a unit with a specific spell
+local function BuffUnitWithSpell(unit, spell)
+    if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
+        if not buffed(spell, unit) then
+            CastSpellByName(spell)
+            SpellTargetUnit(unit)
+            master_buff = true
+            return true
+        end
+    end
+    master_buff = false
+    return false
+end
+
+-- Function to buff a unit with Power Word: Fortitude and Divine Spirit
+local function BuffUnit(unit)
+    if BuffUnitWithSpell(unit, SPELL_PWF) then
+        return true
+    end
+    if BuffUnitWithSpell(unit, SPELL_SPIRIT) then
+        return true
+    end
+    return false
+end
+
 -- Function to check if all buffing is complete
 local function IsBuffingComplete()
-    -- Check if the player is buffed
-    if not buffed(SPELL_PWF, "player") or not buffed(SPELL_SPIRIT, "player") then
+    if not BuffUnitWithSpell("player", SPELL_PWF) or not BuffUnitWithSpell("player", SPELL_SPIRIT) then
         return false
     end
 
-    -- Check if party members are buffed and in range
     for i = 1, 4 do
         local partyMember = "party" .. i
         if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
-            if not buffed(SPELL_PWF, partyMember) or not buffed(SPELL_SPIRIT, partyMember) then
+            if not BuffUnitWithSpell(partyMember, SPELL_PWF) or not BuffUnitWithSpell(partyMember, SPELL_SPIRIT) then
                 return false
             end
         end
@@ -208,17 +218,32 @@ local function BuffInnerFire()
     end
 end
 
+-- Function to buff party members
+-- Function to buff party members
+-- Function to buff party members
 local function BuffParty()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
-
+    if mana > DRINKING_MANA_THRESHOLD then
+        master_drink = false
+    end
+    if master_drink then
+        return
+    end
     CheckDrinkBuff()
 
-    -- Skip buffing if mana is 10% or less or if in drinking mode
-    if mana <= 10 or isDrinkingMode then
+    -- Do not buff if drinking mode is active
+    if isDrinkingMode then
+        print("Heresy: buffparty: drink mode true, not buffing")
         return
     end
 
-    -- Buff myself first
+    -- Do not buff if mana is critically low
+    if mana <= LOW_MANA_THRESHOLD then
+        print("Heresy: buffparty: mana critical, not buffing")
+        return
+    end
+
+    -- Buff the player
     if BuffUnit("player") then
         return
     end
@@ -231,6 +256,9 @@ local function BuffParty()
         end
     end
 end
+
+-- end BUFPARTY function
+
 
 -- Function to dispel debuffs from party members and myself
 local function DispelParty()
@@ -280,29 +308,31 @@ local function CureDiseaseParty()
     end
 end
 
--- healparty function
+-- Function to heal party members
+-- Function to heal party members
+-- Function to heal party members
 local function HealParty()
+        if master_buff then
+            print("Heresy: we are buffing, not healing yet")
+            return false
+        end
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-    -- Check if the player is no longer drinking (no drink buff)
     CheckDrinkBuff()
 
-    -- If in drinking mode, only interrupt for emergency healing or if mana is above 80%
+    -- If drinking mode is active, only heal in emergencies
     if isDrinkingMode then
-        -- Check if mana is above 80%, and if so, disable drinking mode
         if mana >= DRINKING_MANA_THRESHOLD then
             isDrinkingMode = false
-         --   SendChatMessage("Heresy: healparty isdrinking false", "PARTY")
-
-            return false -- No healing was needed
+            print("Heresy: healparty: drink mode set false")
+            return false
         end
 
 
-        -- Check for emergency healing (party members below 30% health)
         local lowestHealthUnit = nil
         local lowestHealthPercent = EMERGENCY_HEALTH_THRESHOLD
 
-        -- Check player's health
+        -- Check player health
         if not UnitIsDeadOrGhost("player") and IsUnitInRange("player") then
             local playerHealth = UnitHealth("player") / UnitHealthMax("player") * 100
             if playerHealth < lowestHealthPercent then
@@ -323,14 +353,9 @@ local function HealParty()
             end
         end
 
-        -- Only heal if the lowest health unit is below the emergency threshold
+        -- Heal the lowest health unit if below emergency threshold
         if lowestHealthUnit and lowestHealthPercent < EMERGENCY_HEALTH_THRESHOLD then
-            local healneed = UnitHealthMax(lowestHealthUnit) - UnitHealth(lowestHealthUnit)
-            local Health = UnitHealth(lowestHealthUnit) / UnitHealthMax(lowestHealthUnit)
-
-            -- Get the appropriate healing spell based on QuickHeal logic
             local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
-
             if SpellID then
                 CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
                 SpellTargetUnit(lowestHealthUnit)
@@ -338,13 +363,13 @@ local function HealParty()
             end
         end
 
-        return false -- No healing was needed
+        return false
     else
-        -- If not in drinking mode, proceed with normal healing logic
+        -- Normal healing logic (not in drinking mode)
         local lowestHealthUnit = nil
         local lowestHealthPercent = 90
 
-        -- Check player's health
+        -- Check player health
         if not UnitIsDeadOrGhost("player") and IsUnitInRange("player") then
             local playerHealth = UnitHealth("player") / UnitHealthMax("player") * 100
             if playerHealth < lowestHealthPercent then
@@ -365,14 +390,9 @@ local function HealParty()
             end
         end
 
-        -- Heal the lowest health unit based on thresholds
+        -- Heal the lowest health unit
         if lowestHealthUnit then
-            local healneed = UnitHealthMax(lowestHealthUnit) - UnitHealth(lowestHealthUnit)
-            local Health = UnitHealth(lowestHealthUnit) / UnitHealthMax(lowestHealthUnit)
-
-            -- Get the appropriate healing spell based on QuickHeal logic
             local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
-
             if SpellID then
                 CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
                 SpellTargetUnit(lowestHealthUnit)
@@ -380,9 +400,11 @@ local function HealParty()
             end
         end
 
-        return false -- No healing was needed
+        return false
     end
 end
+
+-- end HEALPARTY function
 
 -- Function to assist a party member by casting Smite on their target
 local function AssistPartyMember()
@@ -396,43 +418,37 @@ local function AssistPartyMember()
             if UnitExists(target) and UnitCanAttack("player", target) then
                 AssistUnit(partyMember)
 
-                -- Cast Shadow Word: Pain if mana > 50 and the target doesn't have it
                 if mana > 75 and not buffed(SPELL_SWP, target) then
                     CastSpellByName(SPELL_SWP2)
                 end
 
-                -- Cast Mind Blast if mana > 80, Shadow Word: Pain is on the target, and Mind Blast is off cooldown
-                if mana > 70 and buffed(SPELL_SWP, target) then
+                if buffed(SPELL_SWP, target) then
                     local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
                     if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
-                        -- Toggle Shoot off before casting Mind Blast
                         ToggleShootOff()
                         CastSpellByName(SPELL_MIND_BLAST2)
-                        lastShootToggleTime = currentTime -- Reset the timer
-                        return -- Exit after casting Mind Blast
-                    end
-                end
-                -- Cast Mind Flay if mana > 80, Shadow Word: Pain is on the target, and Mind Blast is on cooldown
-                if mana > 65 and buffed(SPELL_SWP, target) then
-                    local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
-                    if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) > 1 and (currentTime - lastFlayTime) >= flayDuration then
-                        -- Toggle Shoot off before casting Mind Flay
-                        ToggleShootOff()
-                        CastSpellByName(SPELL_MIND_FLAY)
-                        lastFlayTime = currentTime
-                        lastShootToggleTime = currentTime -- Reset the timer
-                        return -- Exit after casting Mind Flay
+                        lastShootToggleTime = currentTime
+                        return
                     end
                 end
 
-                -- Fallback to Shoot if Mind Blast is on cooldown or conditions aren't met
-                -- Toggle Shoot off after 8 seconds if it's active
-                if IsShootActive() and (currentTime - lastShootToggleTime) >= shootToggleCooldown then
+                if buffed(SPELL_SWP, target) then
+                    local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
+                    if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) > 1 and (currentTime - lastFlayTime) >= FLAY_DURATION then
+                        ToggleShootOff()
+                        CastSpellByName(SPELL_MIND_FLAY)
+                        lastFlayTime = currentTime
+                        lastShootToggleTime = currentTime
+                        return
+                    end
+                end
+
+                if IsShootActive() and (currentTime - lastShootToggleTime) >= SHOOT_TOGGLE_COOLDOWN then
                     ToggleShootOff()
-                    lastShootToggleTime = currentTime -- Reset the timer
-                elseif not IsShootActive() and (currentTime - lastFlayTime) >= flayDuration then
-                    CastSpellByName(SPELL_SHOOT) -- Toggle Shoot on
-                    lastShootToggleTime = currentTime -- Reset the timer
+                    lastShootToggleTime = currentTime
+                elseif not IsShootActive() and (currentTime - lastFlayTime) >= FLAY_DURATION then
+                    CastSpellByName(SPELL_SHOOT)
+                    lastShootToggleTime = currentTime
                 end
             end
         end
@@ -442,42 +458,53 @@ end
 -- Function to follow a party member
 local function FollowPartyMember()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
-
-    -- Check if the priest is currently drinking or has low mana
-    if isDrinkingMode or mana <= 10 then
-        return  -- Exit the function if the priest is drinking or has low mana
+    if mana > DRINKING_MANA_THRESHOLD then
+        master_drink = false
+    end
+    if master_drink then
+        return
     end
 
-    -- If not drinking and mana is sufficient, proceed to follow a party member
-    FollowByName("Rele", exactMatch)
-   -- SendChatMessage("Heresy: following...", "PARTY")
+    CheckDrinkBuff()
+
+    -- If drinking mode is active, only heal in emergencies
+    if isDrinkingMode then
+        if mana >= DRINKING_MANA_THRESHOLD then
+            isDrinkingMode = false
+            print("Heresy: follow function: drinkmode set false")
+            return false
+        end
+    end
+
+    if not isDrinkingMode and not master_drink then
+        FollowByName("Rele", exactMatch)
+        -- print("Heresy: following executed")
+    end
+
 end
+
 
 -- Add a flag to track if the drinking announcement has been made during the current combat
 local hasAnnouncedDrinking = false
 
--- oom function
+-- Function to handle out of mana logic
+-- Function to handle out of mana logic
 local function OOM()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-    -- Check if the player is no longer drinking (no drink buff)
     CheckDrinkBuff()
 
-    -- If in drinking mode, only stop drinking if mana is above 80%
+    -- If drinking mode is active and mana is above the drinking threshold, stop drinking
     if isDrinkingMode and mana >= DRINKING_MANA_THRESHOLD then
         isDrinkingMode = false
-    --SendChatMessage("Heresy: OOM function isdrinkingfalse", "PARTY")
-
+        print("Heresy: OOM function, drink mode set false")
         return
     end
 
-    -- Rest of the OOM logic...
-
-
-    -- If mana is critically low (below 10%), drink immediately without checking buffing
-    if mana <= 10 and not UnitAffectingCombat("player") then
+    -- If mana is critically low (below 10%), drink immediately
+    if mana <= LOW_MANA_THRESHOLD and not UnitAffectingCombat("player") then
         if not HasBuff("player", drinkBuffs) then
-            SendChatMessage("Heresy: CRITICALLY LOW MANA -- Drinking immediately...", "PARTY")
+            -- SendChatMessage("Heresy: CRITICALLY LOW MANA -- Drinking immediately...", "PARTY")
             for b = 0, 4 do
                 for s = 1, GetContainerNumSlots(b) do
                     local itemLink = GetContainerItemLink(b, s)
@@ -485,8 +512,9 @@ local function OOM()
                         for _, drink in ipairs(drinkstodrink) do
                             if strfind(itemLink, drink) then
                                 UseContainerItem(b, s)
-                                isDrinkingMode = true -- Enable drinking mode
-                                return -- Exit the function after starting to drink
+                                isDrinkingMode = true
+                                master_drink = true
+                                return
                             end
                         end
                     end
@@ -495,11 +523,15 @@ local function OOM()
         end
     end
 
+    -- If mana is below 80%, drink
+    if master_buff then
+        print("Heresy: we are buffing, skipping drink")
+        return false
+    end
 
-    -- If mana is low but not critically low (10% < mana < 70%), check if buffing is complete before drinking
-    if mana > 10 and mana < 70 and not UnitAffectingCombat("player") and IsBuffingComplete() then
+    if mana > LOW_MANA_THRESHOLD and mana < DRINKING_MANA_THRESHOLD and not UnitAffectingCombat("player") then
         if not HasBuff("player", drinkBuffs) then
-            SendChatMessage("Heresy: LOW MANA -- Drinking...", "PARTY")
+            -- SendChatMessage("Heresy: LOW MANA -- Drinking...", "PARTY")
             for b = 0, 4 do
                 for s = 1, GetContainerNumSlots(b) do
                     local itemLink = GetContainerItemLink(b, s)
@@ -507,8 +539,9 @@ local function OOM()
                         for _, drink in ipairs(drinkstodrink) do
                             if strfind(itemLink, drink) then
                                 UseContainerItem(b, s)
-                                isDrinkingMode = true -- Enable drinking mode
-                                return -- Exit the function after starting to drink
+                                isDrinkingMode = true
+                                master_drink = true
+                                return
                             end
                         end
                     end
@@ -517,8 +550,8 @@ local function OOM()
         end
     end
 
-    -- Use Quel'dorei Meditation if mana is critically low, in combat, and not drinking
-    if mana < 15 and UnitAffectingCombat("player") and not HasBuff("player", drinkBuffs) then
+    -- If mana is critically low during combat, use Quel'dorei Meditation
+    if mana < CRITICAL_MANA_THRESHOLD and UnitAffectingCombat("player") and not HasBuff("player", drinkBuffs) then
         local c, s = CastSpellByName, SPELL_QDM
         local i = nil
         for j = 1, 180 do
@@ -535,24 +568,25 @@ local function OOM()
         end
     end
 
-    -- Announce drinking requirement after combat if mana is low and the announcement hasn't been made yet
-    if UnitAffectingCombat("player") and mana < 40 and not hasAnnouncedDrinking then
+    -- Announce low mana during combat
+    if UnitAffectingCombat("player") and mana < MANA_ANNOUNCEMENT_THRESHOLD and not hasAnnouncedDrinking then
         SendChatMessage("Heresy: LOW MANA -- I need to drink after combat!", "PARTY")
-        hasAnnouncedDrinking = true -- Set the flag to prevent repeated announcements
+        hasAnnouncedDrinking = true
     end
 end
+
+-- end of OOM function
 
 -- Event handler to reset the announcement flag when combat ends
 local function OnEvent(self, event, ...)
     if event == "PLAYER_REGEN_ENABLED" then
-        -- Combat ended, reset the announcement flag
         hasAnnouncedDrinking = false
     end
 end
 
 -- Create a frame to listen for combat events
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED") -- Fires when combat ends
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:SetScript("OnEvent", OnEvent)
 
 -- Slash command to toggle assist mode
@@ -566,27 +600,23 @@ SlashCmdList["HERESY_ASSIST"] = function()
     end
 end
 
--- main heresey slash command
+-- Main heresy slash command
 SLASH_HERESY1 = "/heresy"
 SlashCmdList["HERESY"] = function()
-    -- Check if healing is needed
     local healingNeeded = HealParty()
     DispelParty()
-    -- Always check for low mana and drink if necessary
     OOM()
 
-    -- If no healing is needed, proceed to buff and assist
     if not healingNeeded then
         local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-        -- Skip buffing if mana is 10% or less
-        if mana > 10 then
+
             if not UnitAffectingCombat("player") then
                 BuffParty()
+                BuffInnerFire()
+                FollowPartyMember()
             end
-            BuffInnerFire()
-            FollowPartyMember()
-        end
+
 
         if assistmode == 1 then
             AssistPartyMember()
