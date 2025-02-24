@@ -1,5 +1,7 @@
 Heresy Addon for Turtle WoW CC2
 
+This addon is highly specific for my purposes and likely will not be useful for anyone else unless modified. It's mainly uploaded to github just so I can keep version history in case I break something and need to roll back.
+
 Overview
 
 Heresy is a custom addon designed to assist priests in World of Warcraft by automating various tasks such as healing, buffing, dispelling, and assisting party members. The addon is particularly useful for managing mana, healing party members, and providing support during combat.
