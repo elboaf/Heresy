@@ -3,6 +3,7 @@ Heresy Addon for Turtle WoW CC2
 This addon is highly specific for my purposes and likely will not be useful for anyone else unless modified. It's mainly uploaded to github just so I can keep version history in case I break something and need to roll back. It was primarily written using deepseek v3 AI, feeding in example code from the turtle wow api documentation to ensure everything works correctly
 
 https://www.deepseek.com/
+
 https://turtle-wow.fandom.com/wiki/API_Functions
 
 Overview
