@@ -7,12 +7,14 @@ local master_follow = false
 
 -- Global variables for configuration
 local isDrinkingMode = false
-local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at 80% mana
-local START_DRINKING_MANA_THRESHOLD = 50 -- Stop drinking at 80% mana
-local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below 30% health even while drinking
-local HEALTH_THRESHOLD = 70 -- Heal if health is below 70%
+local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at this % mana
+local START_DRINKING_MANA_THRESHOLD = 70 -- Start drinking at this % mana
+local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below this % health even while drinking
+local HEALTH_THRESHOLD = 85 -- Heal if health is below this %
+local BANDAIDS_MANA_THRESHOLD = 100 -- use shield and renew if my mana is above this %
 local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
 local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
+local QDM_POT_MANA_THRESHOLD = 30 -- Threshold for QDM/POTS
 local MANA_ANNOUNCEMENT_THRESHOLD = 40 -- Threshold for announcing low mana
 local SHOOT_TOGGLE_COOLDOWN = 1.5 -- Toggle Shoot off after 1.5 seconds
 local FLAY_DURATION = 3 -- Duration for Mind Flay
@@ -43,14 +45,25 @@ local SPELL_PSCREAM = "Psychic Scream"
 local SPELL_INNER_FIRE = "Inner Fire"
 local SPELL_DISPEL = "Dispel Magic"
 local SPELL_CURE_DISEASE = "Cure Disease"
+local SPELL_LEVITATE = "Levitate"
 
 -- Timing variables for Shoot toggle
 local lastShootToggleTime = 0
 local lastFlayTime = 0
 
 local drinkstodrink = {
+    "Moonberry",
     "Sweet",
     "Melon",
+    "Conjured",
+}
+
+local feathers = {
+    "Light Feather",
+}
+
+local PWS_DEBUFF= {
+    "AshesToAshes",
 }
 
 -- List of debuffs to dispel with Dispel Magic
@@ -63,6 +76,8 @@ local debuffsToDispel = {
     "FlameShock",
     "ThunderClap",
     "Nature_Sleep",
+    "StrangleVines",
+    "Slow",
     -- Add more debuff names here as needed
 }
 
@@ -70,6 +85,7 @@ local debuffsToDispel = {
 local diseasesToCure = {
     "NullifyDisease",
     "CallofBone",
+    "CreepingPlague",
     -- Add more disease debuff names here as needed
 }
 
@@ -246,11 +262,11 @@ local function BuffParty()
         return
     end
 
+
     -- Buff the player
     if BuffUnit("player") then
         return
     end
-
     -- Buff party members
     for i = 1, 4 do
         local partyMember = "party" .. i
@@ -258,6 +274,7 @@ local function BuffParty()
             return
         end
     end
+
 end
 
 -- end BUFPARTY function
@@ -312,13 +329,12 @@ local function CureDiseaseParty()
 end
 
 -- Function to heal party members
--- Function to heal party members
--- Function to heal party members
 local function HealParty()
-        if master_buff then
-            print("Heresy: we are buffing, not healing yet")
-            return false
-        end
+    if master_buff then
+        print("Heresy: we are buffing, not healing yet")
+        return false
+    end
+
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
     CheckDrinkBuff()
@@ -330,7 +346,6 @@ local function HealParty()
             print("Heresy: healparty: drink mode set false")
             return false
         end
-
 
         local lowestHealthUnit = nil
         local lowestHealthPercent = EMERGENCY_HEALTH_THRESHOLD
@@ -395,6 +410,29 @@ local function HealParty()
 
         -- Heal the lowest health unit
         if lowestHealthUnit then
+
+           -- If my mana is above bandaids threshold % and PWS is not on CD, and the target is not already buffed with PWS or weakened soul, and i'm in combat, then cast PWS
+            local spellIndex = GetSpellIndex(SPELL_PWS)
+            -- local pws_currentTime = GetTime()
+
+
+            -- If mana is above 90% and the target is not already buffed with Renew, cast Renew
+            if mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_RENEW, lowestHealthUnit) then
+                CastSpellByName(SPELL_RENEW)
+                SpellTargetUnit(lowestHealthUnit)
+            --    pwscheck_time = pws_currentTime
+            --    pwscheck_health = lowestHealthPercent
+            --    pwscheck_unit = lowestHealthUnit
+                return true
+            end
+
+            if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 and mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_PWS, lowestHealthUnit) and not HasDebuff(lowestHealthUnit, PWS_DEBUFF) and UnitAffectingCombat("player") then
+                CastSpellByName(SPELL_PWS)
+                SpellTargetUnit(lowestHealthUnit)
+                return true
+            end
+
+
             local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
             if SpellID then
                 CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
@@ -564,7 +602,7 @@ local function OOM()
     end
 
     -- If mana is critically low during combat, use Quel'dorei Meditation
-    if mana < CRITICAL_MANA_THRESHOLD and UnitAffectingCombat("player") and not HasBuff("player", drinkBuffs) then
+    if mana < QDM_POT_MANA_THRESHOLD and UnitAffectingCombat("player") and not HasBuff("player", drinkBuffs) then
         local c, s = CastSpellByName, SPELL_QDM
         local i = nil
         for j = 1, 180 do
@@ -589,6 +627,28 @@ local function OOM()
 end
 
 -- end of OOM function
+
+-- levitate function for style :)
+local function Levitate()
+            for b = 0, 4 do
+                for s = 1, GetContainerNumSlots(b) do
+                    local itemLink = GetContainerItemLink(b, s)
+                    if itemLink then
+                        for _, feather in ipairs(feathers) do
+                            if strfind(itemLink, feather) then
+                                if not buffed("Levitate", "player") then
+                                    CastSpellByName(SPELL_LEVITATE)
+                                    return
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+
+-- end levitate 
 
 -- Event handler to reset the announcement flag when combat ends
 local function OnEvent(self, event, ...)
@@ -616,8 +676,18 @@ end
 -- Main heresy slash command
 SLASH_HERESY1 = "/heresy"
 SlashCmdList["HERESY"] = function()
+    if master_drink and UnitAffectingCombat("player") then
+        print("Heresy: canceling drinkmode due to combat")
+        master_drink = false
+    end
+    if master_buff and UnitAffectingCombat("player") then
+        print("Heresy: canceling buffmode due to combat")
+        master_buff = false
+    end
+
     local healingNeeded = HealParty()
     DispelParty()
+    CureDiseaseParty()
     OOM()
 
     if not healingNeeded then
@@ -627,6 +697,7 @@ SlashCmdList["HERESY"] = function()
             if not UnitAffectingCombat("player") then
                 BuffParty()
                 BuffInnerFire()
+                --Levitate()
             end
 
             FollowPartyMember()
