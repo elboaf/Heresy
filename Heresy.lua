@@ -506,6 +506,9 @@ local function AssistPartyMember()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
     local currentTime = GetTime()
 
+    -- Check if "Mind Flay" is in the spell book
+    local hasMindFlay = GetSpellIndex("Mind Flay") ~= nil
+
     for i = 1, 4 do
         local partyMember = "party" .. i
         if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
@@ -513,10 +516,12 @@ local function AssistPartyMember()
             if UnitExists(target) and UnitCanAttack("player", target) then
                 AssistUnit(partyMember)
 
+                -- Apply Shadow Word: Pain if mana is sufficient
                 if mana > 75 and not buffed(SPELL_SWP, target) then
                     CastSpellByName(SPELL_SWP2)
                 end
 
+                -- Cast Mind Blast if Shadow Word: Pain is active and Mind Blast is off cooldown
                 if buffed(SPELL_SWP, target) then
                     local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
                     if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
@@ -527,7 +532,8 @@ local function AssistPartyMember()
                     end
                 end
 
-                if buffed(SPELL_SWP, target) then
+                -- Cast Mind Flay if Shadow Word: Pain is active, Mind Blast is on cooldown, and Mind Flay is available
+                if buffed(SPELL_SWP, target) and hasMindFlay then
                     local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
                     if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) > 1 and (currentTime - lastFlayTime) >= FLAY_DURATION then
                         ToggleShootOff()
@@ -539,10 +545,11 @@ local function AssistPartyMember()
                     end
                 end
 
+                -- Toggle Shoot if Mind Flay is not available or not used
                 if IsShootActive() and (currentTime - lastShootToggleTime) >= SHOOT_TOGGLE_COOLDOWN then
                     ToggleShootOff()
                     lastShootToggleTime = currentTime
-                elseif not IsShootActive() and (currentTime - lastFlayTime) >= FLAY_DURATION then
+                elseif not IsShootActive() and (not hasMindFlay or (currentTime - lastFlayTime) >= FLAY_DURATION) then
                     CastSpellByName(SPELL_SHOOT)
                     lastShootToggleTime = currentTime
                 end
@@ -748,6 +755,48 @@ end
 
 -- end mana pot
 
+-- Function to check if "Rele" has the "Thalassian Unicorn" buff and mount/dismount accordingly
+local function MountWithRele()
+    -- Target "Rele" (exact match)
+    TargetByName("Rele", true)
+
+    -- Check if the target is valid and is "Rele"
+    if UnitExists("target") and UnitIsPlayer("target") and UnitName("target") == "Rele" then
+        -- Check if "Rele" has the "Thalassian Unicorn" buff
+        local releHasBuff = buffed("Thalassian Unicorn", "target")
+
+        -- Check if you have the "Thalassian Unicorn" buff
+        local playerHasBuff = buffed("Thalassian Unicorn", "player")
+
+        -- If "Rele" has the buff and you don't, mount up
+        if releHasBuff and not playerHasBuff then
+            local spellIndex = GetSpellIndex("Thalassian Unicorn")
+            if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+                CastSpellByName("Thalassian Unicorn")
+                print("Heresy: Mounting up with Thalassian Unicorn.")
+            else
+                print("Heresy: Thalassian Unicorn is on cooldown.")
+            end
+        -- If "Rele" does not have the buff and you do, dismount
+        elseif not releHasBuff and playerHasBuff then
+            local spellIndex = GetSpellIndex("Thalassian Unicorn")
+            if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+                CastSpellByName("Thalassian Unicorn")
+                print("Heresy: Dismounting Thalassian Unicorn.")
+            else
+                print("Heresy: Thalassian Unicorn is on cooldown.")
+            end
+        end
+    else
+        print("Heresy: Rele is not found or is not a valid target.")
+    end
+
+    -- Clear the target after checking
+    ClearTarget()
+end
+
+-- end mount function
+
 -- Event handler to reset the announcement flag when combat ends
 local function OnEvent(self, event, ...)
     if event == "PLAYER_REGEN_ENABLED" then
@@ -809,6 +858,7 @@ SlashCmdList["HERESY"] = function()
                 BuffParty()
                 BuffInnerFire()
                 --Levitate()
+                MountWithRele()
             end
 
             FollowPartyMember()
