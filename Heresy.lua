@@ -4,6 +4,7 @@ Heresy = {}
 local master_buff = false
 local master_drink = false
 local master_follow = false
+local championName = nil
 
 -- Global variables for configuration
 local isDrinkingMode = false
@@ -95,6 +96,68 @@ local drinkBuffs = {
     -- Add more partial patterns as needed
 }
 
+-- Table of mana potions to search for
+local manaPotions = {
+    "Mana Potion",
+    -- Add more mana potion names here as needed
+}
+
+-- Function to check if the target is the champion
+local function IsChampion(unit)
+    return championName and UnitExists(unit) and UnitName(unit) == championName
+end
+
+-- Helper function to get the spell index by name
+local function GetSpellIndex(spellName)
+    for i = 1, 180 do
+        local name = GetSpellName(i, BOOKTYPE_SPELL)
+        if name and strfind(name, spellName) then
+            return i
+        end
+    end
+    return nil
+end
+
+-- Function to buff the champion with "Proclaim Champion" and "Champion's Grace"
+local function BuffChampion()
+    if not championName then
+        return -- No champion designated
+    end
+
+    -- Check if the champion is in range and alive
+    if not UnitExists("target") or not IsChampion("target") or UnitIsDeadOrGhost("target") then
+        TargetByName(championName, true) -- Target the champion
+    end
+
+    if not IsChampion("target") then
+        return -- Champion is not targeted
+    end
+
+    -- Check if the champion has the "Holy Champion" buff
+    local hasHolyChampion = buffed("Holy Champion", "target")
+
+    -- Cast "Proclaim Champion" if the champion doesn't have "Holy Champion" and the spell is off cooldown
+    if not hasHolyChampion then
+        local spellIndex = GetSpellIndex("Proclaim Champion")
+        if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+            CastSpellByName("Proclaim Champion")
+            SpellTargetUnit("target")
+            print("Heresy: Casting Proclaim Champion on " .. championName)
+            return
+        else
+            print("Heresy: Proclaim Champion is on cooldown.")
+            return
+        end
+    end
+
+    -- Cast "Champion's Grace" if the champion has "Holy Champion"
+    if hasHolyChampion and not buffed("Champion's Grace", "target") then
+        CastSpellByName("Champion's Grace")
+        SpellTargetUnit("target")
+        print("Heresy: Casting Champion's Grace on " .. championName)
+    end
+end
+
 -- Helper function to check if a unit has a specific debuff
 local function HasDebuff(unit, debuffList)
     for i = 1, 16 do
@@ -134,16 +197,7 @@ local function CheckDrinkBuff()
     end
 end
 
--- Helper function to get the spell index by name
-local function GetSpellIndex(spellName)
-    for i = 1, 180 do
-        local name = GetSpellName(i, BOOKTYPE_SPELL)
-        if name and strfind(name, spellName) then
-            return i
-        end
-    end
-    return nil
-end
+
 
 -- Helper function to check if a unit is within buffing range
 local function IsUnitInRange(unit)
@@ -237,9 +291,7 @@ local function BuffInnerFire()
     end
 end
 
--- Function to buff party members
--- Function to buff party members
--- Function to buff party members
+-- Function to buff party members and the champion
 local function BuffParty()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
     if mana > DRINKING_MANA_THRESHOLD then
@@ -262,11 +314,14 @@ local function BuffParty()
         return
     end
 
+    -- Buff the champion first
+    BuffChampion()
 
     -- Buff the player
     if BuffUnit("player") then
         return
     end
+
     -- Buff party members
     for i = 1, 4 do
         local partyMember = "party" .. i
@@ -274,7 +329,6 @@ local function BuffParty()
             return
         end
     end
-
 end
 
 -- end BUFPARTY function
@@ -540,6 +594,12 @@ local hasAnnouncedDrinking = false
 local function OOM()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
+    if mana < 40 then
+            if UseManaPotion() then
+            return
+        end
+    end
+
     CheckDrinkBuff()
 
     -- If drinking mode is active and mana is above the drinking threshold, stop drinking
@@ -650,6 +710,44 @@ local function Levitate()
 
 -- end levitate 
 
+
+
+-- Function to search bags for mana potions and use one when mana is below 40%
+local function UseManaPotion()
+    local mana = (UnitMana("player") / UnitManaMax("player")) * 100
+
+    -- Check if mana is below 40%
+    if mana < 40 then
+        -- Search through all bags
+        for b = 0, 4 do
+            for s = 1, GetContainerNumSlots(b) do
+                local itemLink = GetContainerItemLink(b, s)
+                if itemLink then
+                    -- Check if the item is in the mana potions table
+                    for _, potion in ipairs(manaPotions) do
+                        if strfind(itemLink, potion) then
+                            -- Check if the item is off cooldown
+                            local startTime, duration, isEnabled = GetContainerItemCooldown(b, s)
+                            if startTime == 0 and duration == 0 then
+                                -- Use the mana potion
+                                UseContainerItem(b, s)
+                                print("Heresy: Using " .. potion .. " to restore mana.")
+                                return true
+                            else
+                                print("Heresy: " .. potion .. " is on cooldown.")
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- end mana pot
+
 -- Event handler to reset the announcement flag when combat ends
 local function OnEvent(self, event, ...)
     if event == "PLAYER_REGEN_ENABLED" then
@@ -670,6 +768,19 @@ SlashCmdList["HERESY_ASSIST"] = function()
         print("Heresy: Assist mode is now ON.")
     else
         print("Heresy: Assist mode is now OFF.")
+    end
+end
+
+-- Slash command to designate the champion
+SLASH_HERESY_CHAMP1 = "/heresy-champ"
+SlashCmdList["HERESY_CHAMP"] = function()
+    if UnitExists("target") and UnitIsPlayer("target") then
+        championName = UnitName("target")
+        print("Heresy: " .. championName .. " has been designated as the champion!")
+        SendChatMessage("Heresy: " .. championName .. " has been designated as the champion!", "PARTY")
+
+    else
+        print("Heresy: You must target a player to designate them as the champion.")
     end
 end
 
