@@ -201,6 +201,8 @@ local function BuffChampion()
         if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
             CastSpellByName("Proclaim Champion")
             SpellTargetUnit("target")
+            SendChatMessage("Heresy: Proclaiming " .. championName .. " as the champion. One moment!", "PARTY")
+
             --prient("Heresy: Casting Proclaim Champion on " .. championName)
             return
         else
@@ -389,6 +391,7 @@ end
 
 -- Function to buff party members and the champion
 local function BuffParty()
+    ClearTarget()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
     -- Check if buffing is throttled
@@ -737,6 +740,9 @@ end
 
 -- Function to follow a party member
 local function FollowPartyMember()
+    if UnitIsDead("Player") then
+        FollowByName("Rele", exactMatch)
+    end
     if not master_follow then
         FollowByName("Rele", exactMatch)
         master_follow = true
@@ -990,6 +996,9 @@ end
 -- Main heresy slash command
 SLASH_HERESY1 = "/heresy"
 SlashCmdList["HERESY"] = function()
+if UnitIsDead("Player") then
+    FollowPartyMember()
+end
     if master_drink and UnitAffectingCombat("player") then
         --prient("Heresy: canceling drinkmode due to combat")
         master_drink = false
