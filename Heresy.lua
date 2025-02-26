@@ -4,14 +4,16 @@ Heresy = {}
 local master_buff = false
 local master_drink = false
 local master_follow = false
-local championName = nil
+local championName = "Rele"
+local champGraceBuffed = false
 local lastBuffCompleteTime = 0
-local BUFF_THROTTLE_DURATION = 120 -- 2 minutes in seconds
+local BUFF_THROTTLE_DURATION = 60 -- 1 minutes in seconds
 
 -- Global variables for configuration
 local isDrinkingMode = false
+local isDrinkingNow = false
 local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at this % mana
-local START_DRINKING_MANA_THRESHOLD = 80 -- Start drinking at this % mana
+local START_DRINKING_MANA_THRESHOLD = 70 -- Start drinking at this % mana
 local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below this % health even while drinking
 local HEALTH_THRESHOLD = 85 -- Heal if health is below this %
 local BANDAIDS_MANA_THRESHOLD = 90 -- use shield and renew if my mana is above this %
@@ -22,7 +24,7 @@ local MANA_ANNOUNCEMENT_THRESHOLD = 40 -- Threshold for announcing low mana
 local SHOOT_TOGGLE_COOLDOWN = 1.5 -- Toggle Shoot off after 1.5 seconds
 local FLAY_DURATION = 3 -- Duration for Mind Flay
 
-local assistmode = 0
+local assistmode = 1
 
 -- Addon Constants
 local SPELL_PWF = "Power Word: Fortitude"
@@ -183,6 +185,17 @@ local function BuffChampion()
         return -- No champion designated
     end
 
+    -- Cast "Champion's Grace" if the champion has "Holy Champion"
+for i = 1, 4 do
+        local partyChamp = "party" .. i
+        if UnitExists(partyChamp) and not UnitIsDeadOrGhost(partyChamp) and buffed("Holy Champion", partyChamp) and not buffed("Champion's Grace", partyChamp) then
+        CastSpellByName("Champion's Grace")
+        SpellTargetUnit(partyChamp)
+        champGraceBuffed = true
+    end
+end
+
+if not champGraceBuffed then
     -- Check if the champion is in range and alive
     if not UnitExists("target") or not IsChampion("target") or UnitIsDeadOrGhost("target") then
         TargetByName(championName, true) -- Target the champion
@@ -202,20 +215,16 @@ local function BuffChampion()
             CastSpellByName("Proclaim Champion")
             SpellTargetUnit("target")
             SendChatMessage("Heresy: Proclaiming " .. championName .. " as the champion. One moment!", "PARTY")
-
             --prient("Heresy: Casting Proclaim Champion on " .. championName)
             return
         else
+            ClearTarget()
             --prient("Heresy: Proclaim Champion is on cooldown.")
             return
         end
     end
-
-    -- Cast "Champion's Grace" if the champion has "Holy Champion"
-    if hasHolyChampion and not buffed("Champion's Grace", "target") then
-        CastSpellByName("Champion's Grace")
-        SpellTargetUnit("target")
-        --prient("Heresy: Casting Champion's Grace on " .. championName)
+    else
+        return
     end
 end
 
@@ -420,6 +429,8 @@ local function BuffParty()
         return false
     end
 
+    -- Buff the champion first
+    BuffChampion()
 
     -- Buff the player
     if BuffUnit("player") then
@@ -433,8 +444,6 @@ local function BuffParty()
             return false
         end
     end
-    -- Buff the champion first
-    BuffChampion()
 
     -- If no buffing was needed, set the last buff complete time
     lastBuffCompleteTime = GetTime()
@@ -812,7 +821,10 @@ local function OOM()
     -- If mana is critically low (below 10%), drink immediately
     if mana <= LOW_MANA_THRESHOLD and not UnitAffectingCombat("player") then
         if not HasBuff("player", drinkBuffs) then
-            -- SendChatMessage("Heresy: CRITICALLY LOW MANA -- Drinking immediately...", "PARTY")
+            if not isDrinkingNow then
+            SendChatMessage("Heresy: CRITICALLY LOW MANA -- Drinking immediately...", "PARTY")
+            isDrinkingNow = true
+            end
             for b = 0, 4 do
                 for s = 1, GetContainerNumSlots(b) do
                     local itemLink = GetContainerItemLink(b, s)
@@ -842,7 +854,10 @@ local function OOM()
             return
         end
         if not HasBuff("player", drinkBuffs) then
-            -- SendChatMessage("Heresy: LOW MANA -- Drinking...", "PARTY")
+            if not isDrinkingNow then
+            SendChatMessage("Heresy: LOW MANA -- Drinking...", "PARTY")
+            isDrinkingNow = true
+            end
             for b = 0, 4 do
                 for s = 1, GetContainerNumSlots(b) do
                     local itemLink = GetContainerItemLink(b, s)
@@ -975,9 +990,9 @@ SLASH_HERESY_ASSIST1 = "/heresyassist"
 SlashCmdList["HERESY_ASSIST"] = function()
     assistmode = assistmode == 1 and 0 or 1
     if assistmode == 1 then
-        --prient("Heresy: Assist mode is now ON.")
+        print("Heresy: Assist mode is now ON.")
     else
-        --prient("Heresy: Assist mode is now OFF.")
+        print("Heresy: Assist mode is now OFF.")
     end
 end
 
@@ -986,12 +1001,12 @@ SLASH_HERESY_CHAMP1 = "/heresy-champ"
 SlashCmdList["HERESY_CHAMP"] = function()
     if UnitExists("target") and UnitIsPlayer("target") then
         championName = UnitName("target")
-        --prient("Heresy: " .. championName .. " has been designated as the champion!")
+        print("Heresy: " .. championName .. " has been designated as the champion!")
         --SendChatMessage("Heresy: " .. championName .. " has been designated as the champion!", "PARTY")
 
     else
         championName = nil
-        --prient("Heresy: You must target a player to designate them as the champion.")
+        --print("Heresy: You must target a player to designate them as the champion.")
     end
 end
 
@@ -1045,6 +1060,9 @@ end
 
         if assistmode == 1 then
             AssistPartyMember()
+        end
+        if UnitAffectingCombat("player") then
+            isDrinkingNow = false
         end
     end
 end
