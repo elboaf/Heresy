@@ -1,10 +1,14 @@
 -- Addon Name
 Heresy = {}
 
+local leader = "Rele"
+local leaderMount = "Thalassian Unicorn"
+local myMount = "Thalassian Unicorn"
+
 local master_buff = false
 local master_drink = false
 local master_follow = false
-local championName = "Rele"
+local championName = leader
 local champGraceBuffed = false
 local champProclaimed = false
 local lastBuffCompleteTime = 0
@@ -771,10 +775,10 @@ end
 -- Function to follow a party member
 local function FollowPartyMember()
     if UnitIsDead("Player") then
-        FollowByName("Rele", exactMatch)
+        FollowByName(leader, exactMatch)
     end
     if not master_follow then
-        FollowByName("Rele", exactMatch)
+        FollowByName(leader, exactMatch)
         master_follow = true
     end
 
@@ -798,7 +802,7 @@ local function FollowPartyMember()
     end
 
     if not isDrinkingMode and not master_drink then
-        FollowByName("Rele", exactMatch)
+        FollowByName(leader, exactMatch)
         master_follow = true
         -- --prient("Heresy: following executed")
     end
@@ -940,34 +944,34 @@ local function Levitate()
 
 
 
--- Function to check if "Rele" has the "Thalassian Unicorn" buff and mount/dismount accordingly
+-- Function to check if leader has the leaderMount buff and mount/dismount accordingly
 local function MountWithRele()
-    -- Target "Rele" (exact match)
+    -- Target leader (exact match)
     if not master_buff then
-    TargetByName("Rele", true)
+    TargetByName(leader, true)
 
-    -- Check if the target is valid and is "Rele"
-    if UnitExists("target") and UnitIsPlayer("target") and UnitName("target") == "Rele" then
-        -- Check if "Rele" has the "Thalassian Unicorn" buff
-        local releHasBuff = buffed("Thalassian Unicorn", "target")
+    -- Check if the target is valid and is leader
+    if UnitExists("target") and UnitIsPlayer("target") and UnitName("target") == leader then
+        -- Check if leader has the leaderMount buff
+        local releHasBuff = buffed(leaderMount, "target")
 
-        -- Check if you have the "Thalassian Unicorn" buff
-        local playerHasBuff = buffed("Thalassian Unicorn", "player")
+        -- Check if you have the leaderMount buff
+        local playerHasBuff = buffed(myMount, "player")
 
-        -- If "Rele" has the buff and you don't, mount up
+        -- If leader has the buff and you don't, mount up
         if releHasBuff and not playerHasBuff then
-            local spellIndex = GetSpellIndex("Thalassian Unicorn")
+            local spellIndex = GetSpellIndex(myMount)
             if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
-                CastSpellByName("Thalassian Unicorn")
+                CastSpellByName(myMount)
                 --prient("Heresy: Mounting up with Thalassian Unicorn.")
             else
                 --prient("Heresy: Thalassian Unicorn is on cooldown.")
             end
-        -- If "Rele" does not have the buff and you do, dismount
+        -- If leader does not have the buff and you do, dismount
         elseif not releHasBuff and playerHasBuff then
-            local spellIndex = GetSpellIndex("Thalassian Unicorn")
+            local spellIndex = GetSpellIndex(myMount)
             if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
-                CastSpellByName("Thalassian Unicorn")
+                CastSpellByName(myMount)
                 --prient("Heresy: Dismounting Thalassian Unicorn.")
             else
                 --prient("Heresy: Thalassian Unicorn is on cooldown.")
