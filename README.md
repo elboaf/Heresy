@@ -10,60 +10,91 @@ https://turtle-wow.fandom.com/wiki/API_Functions
 
 Overview
 
-Heresy is a custom addon designed to assist priests in World of Warcraft by automating various tasks such as healing, buffing, dispelling, and assisting party members. The addon is particularly useful for managing mana, healing party members, and providing support during combat.
+Heresy is a Lua-based addon for World of Warcraft designed to assist players, particularly Priests, in managing buffs, healing, dispelling, and combat assistance in a party or raid environment. The addon automates many tasks such as buffing party members, healing, dispelling debuffs, and assisting in combat by casting offensive spells on party members' targets.
 Features
 
-    Healing Automation: Automatically heals party members based on their health percentage.
+Automatic Buffing: Automatically buffs party members with spells like Power Word: Fortitude, Divine Spirit, and Shadow Protection.
 
-    Buff Management: Buffs party members with spells like Power Word: Fortitude and Divine Spirit.
+Healing: Heals party members based on their health percentage, prioritizing emergency heals during combat.
 
-    Dispel and Cure Disease: Automatically dispels harmful debuffs and cures diseases from party members.
+Dispelling: Automatically dispels harmful debuffs from party members using Dispel Magic and Cure Disease.
 
-    Assist Mode: Assists party members by casting offensive spells like Smite, Shadow Word: Pain, and Mind Blast on their targets.
+Combat Assistance: Assists party members by casting offensive spells like Smite, Mind Blast, and Mind Flay on their targets.
 
-    Mana Management: Automatically drinks to restore mana when it is low and uses Quel'dorei Meditation in combat.
+Mana Management: Automatically drinks mana potions or uses Quel'dorei Meditation when mana is low.
 
-    Follow Party Member: Follows a designated party member when not engaged in combat or drinking.
+Mount Management: Automatically mounts or dismounts based on the buff status of a designated party member (e.g., "Rele").
 
-Installation
+Levitate: Automatically casts Levitate when the player has the necessary feathers in their inventory.
 
-    Download the Heresy.lua file.
-
-    Place the file in your World of Warcraft Interface/AddOns directory.
-
-    Rename the file to Heresy.lua if necessary.
-
-    Restart World of Warcraft or use the /reload command to load the addon.
-
-Usage
-
-    Main Command: Use the /heresy command to trigger the addon's main functionality. This will check for healing needs, manage mana, buff party members, and assist in combat if assist mode is enabled.
-
-    Assist Mode Toggle: Use the /heresyassist command to toggle assist mode on or off. When assist mode is on, the addon will assist party members by casting offensive spells on their targets.
+Champion Buffing: Designates a champion and buffs them with Proclaim Champion and Champion's Grace.
 
 Configuration
 
-The addon comes with predefined thresholds and settings, but you can modify the following variables in the Heresy.lua file to suit your needs:
+The addon is highly configurable through in-game slash commands and global variables. Key configuration options include:
 
-    DRINKING_MANA_THRESHOLD: The mana percentage at which the addon will stop drinking (default is 80%).
+Mana Thresholds: Set thresholds for when to start drinking, stop drinking, and use mana potions.
 
-    EMERGENCY_HEALTH_THRESHOLD: The health percentage below which the addon will perform emergency healing even while drinking (default is 30%).
+Health Thresholds: Set thresholds for when to heal party members and when to prioritize emergency heals.
 
-    HEALTH_THRESHOLD: The health percentage below which the addon will heal party members (default is 70%).
+Buff Throttling: Prevent excessive buffing by setting a cooldown duration between buffing cycles.
+
+Assist Mode: Toggle combat assistance on or off.
+
+Slash Commands
+
+    /heresy: Main command to execute the addon's logic, including healing, buffing, and assisting.
+
+    /heresyassist: Toggles assist mode on or off.
+
+    /heresy-champ: Designates the currently targeted player as the champion.
+
+    /heresy-rebuff: Resets the buffing throttle and immediately attempts to rebuff party members.
+
+Installation
+
+Download the Heresy.lua file.
+
+Place the file in your World of Warcraft Interface/AddOns/Heresy directory.
+
+Restart World of Warcraft or reload the UI.
+
+The addon will be automatically loaded and ready to use.
+
+Usage
+
+Buffing: The addon will automatically buff party members when out of combat and mana is above the configured threshold.
+
+Healing: The addon will heal party members based on their health percentage, prioritizing emergency heals during combat.
+
+Dispelling: The addon will automatically dispel harmful debuffs from party members.
+
+Combat Assistance: When assist mode is enabled, the addon will assist party members by casting offensive spells on their targets.
+
+Mana Management: The addon will automatically drink mana potions or use Quel'dorei Meditation when mana is low.
+
+Mount Management: The addon will automatically mount or dismount based on the buff status of a designated party member (e.g., "Rele").
+
+Dependencies
+
+QuickHeal: The addon relies on the QuickHeal_Priest_FindHealSpellToUse function for determining the appropriate healing spell to use. Ensure that QuickHeal is installed and functioning correctly.
 
 Notes
 
-    The addon is designed to work with the priest class and assumes you have the necessary spells and abilities.
+The addon is designed for Priests but can be adapted for other classes with minor modifications.
 
-    Ensure you have the appropriate drinks in your inventory for mana restoration.
+The addon uses a throttling mechanism to prevent excessive buffing. Use the /heresy-rebuff command to manually reset the throttle if needed.
 
-    The addon will announce in the party chat when it needs to drink after combat if mana is low.
+The addon assumes that the player has the necessary items (e.g., mana potions, feathers) in their inventory for certain functions (e.g., drinking, levitating).
 
-Support
-
-For any issues or suggestions, please contact the addon's author or submit an issue on the repository where you found this addon.
 License
 
-This addon is provided as-is, without any warranty. Feel free to modify and distribute it as you see fit.
+This addon is released under the MIT License. Feel free to modify and distribute it as you see fit.
+Contributing
 
-Enjoy your time in Azeroth with the Heresy addon!
+Contributions are welcome! Please fork the repository and submit a pull request with your changes.
+Support
+
+For support or to report issues, please open an issue on the GitHub repository.
+
+Enjoy your time in Azeroth with Heresy!
