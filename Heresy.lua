@@ -6,7 +6,7 @@ local master_drink = false
 local master_follow = false
 local championName = nil
 local lastBuffCompleteTime = 0
-local BUFF_THROTTLE_DURATION = 300 -- 10 minutes in seconds
+local BUFF_THROTTLE_DURATION = 120 -- 2 minutes in seconds
 
 -- Global variables for configuration
 local isDrinkingMode = false
@@ -620,8 +620,10 @@ local function HealParty()
         return false
     else
         -- Normal healing logic (not in drinking mode)
+
+        -- Track the lowest health unit for QuickHeal library
         local lowestHealthUnit = nil
-        local lowestHealthPercent = HEALTH_THRESHOLD
+        local lowestHealthPercent = 100
 
         -- Check player health
         if not UnitIsDeadOrGhost("player") and IsUnitInRange("player") then
@@ -644,29 +646,37 @@ local function HealParty()
             end
         end
 
-        -- Heal the lowest health unit
-        if lowestHealthUnit then
-
-           -- If my mana is above bandaids threshold % and PWS is not on CD, and the target is not already buffed with PWS or weakened soul, and i'm in combat, then cast PWS
-            local spellIndex = GetSpellIndex(SPELL_PWS)
-            -- local pws_currentTime = GetTime()
-
-            -- If mana is above 90% and the target is not already buffed with Renew, cast Renew
-            if mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_RENEW, lowestHealthUnit) then
-                CastSpellByName(SPELL_RENEW)
-                SpellTargetUnit(lowestHealthUnit)
-            --    pwscheck_time = pws_currentTime
-            --    pwscheck_health = lowestHealthPercent
-            --    pwscheck_unit = lowestHealthUnit
-                return true
+        -- Proactively cast Renew on players under 90% health
+        -- Iterate through all party members (including the player)
+        local unitsToCheck = {"player", "party1", "party2", "party3", "party4"}
+        for _, unit in ipairs(unitsToCheck) do
+            if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
+                local health = UnitHealth(unit) / UnitHealthMax(unit) * 100
+                if health < 90 and mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_RENEW, unit) then
+                    CastSpellByName(SPELL_RENEW)
+                    SpellTargetUnit(unit)
+                    return true
+                end
             end
+        end
 
-            if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 and mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_PWS, lowestHealthUnit) and not HasDebuff(lowestHealthUnit, PWS_DEBUFF) and UnitAffectingCombat("player") then
-                CastSpellByName(SPELL_PWS)
-                SpellTargetUnit(lowestHealthUnit)
-                return true
+        -- Cast Power Word: Shield on players under 80% health
+        for _, unit in ipairs(unitsToCheck) do
+            if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
+                local health = UnitHealth(unit) / UnitHealthMax(unit) * 100
+                if health < 80 and mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_PWS, unit) and not HasDebuff(unit, PWS_DEBUFF) and UnitAffectingCombat("player") then
+                    local spellIndex = GetSpellIndex(SPELL_PWS)
+                    if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+                        CastSpellByName(SPELL_PWS)
+                        SpellTargetUnit(unit)
+                        return true
+                    end
+                end
             end
+        end
 
+        -- Use QuickHeal library for the lowest health unit under 75% health
+        if lowestHealthUnit and lowestHealthPercent < 75 then
             local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
             if SpellID then
                 CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
@@ -1024,7 +1034,7 @@ end
                     BuffParty()
                 end
                 BuffInnerFire()
-                --Levitate()
+                Levitate()
                 MountWithRele()
             end
 
