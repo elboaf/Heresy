@@ -6,6 +6,7 @@ local master_drink = false
 local master_follow = false
 local championName = "Rele"
 local champGraceBuffed = false
+local champProclaimed = false
 local lastBuffCompleteTime = 0
 local BUFF_THROTTLE_DURATION = 60 -- 1 minutes in seconds
 
@@ -83,6 +84,7 @@ local debuffsToDispel = {
     "Nature_Sleep",
     "StrangleVines",
     "Slow",
+    "AbominationExplosion",
     -- Add more debuff names here as needed
 }
 
@@ -191,14 +193,19 @@ for i = 1, 4 do
         if UnitExists(partyChamp) and not UnitIsDeadOrGhost(partyChamp) and buffed("Holy Champion", partyChamp) and not buffed("Champion's Grace", partyChamp) then
         CastSpellByName("Champion's Grace")
         SpellTargetUnit(partyChamp)
+        champProclaimed = false -- champ was proclaimed in chat once, set false so we can proclaim the next champ later
         champGraceBuffed = true
     end
 end
+
 
 if not champGraceBuffed then
     -- Check if the champion is in range and alive
     if not UnitExists("target") or not IsChampion("target") or UnitIsDeadOrGhost("target") then
         TargetByName(championName, true) -- Target the champion
+        if buffed("Champion's Grace", "target") then
+            champGraceBuffed = true
+        end
     end
 
     if not IsChampion("target") then
@@ -214,7 +221,10 @@ if not champGraceBuffed then
         if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
             CastSpellByName("Proclaim Champion")
             SpellTargetUnit("target")
-            SendChatMessage("Heresy: Proclaiming " .. championName .. " as the champion. One moment!", "PARTY")
+            if not champProclaimed then -- chat spam prevention
+                SendChatMessage("Heresy: Proclaiming " .. championName .. " as the champion. One moment!", "PARTY")
+                champProclaimed = true
+            end -- end chat spam prevention
             --prient("Heresy: Casting Proclaim Champion on " .. championName)
             return
         else
@@ -401,6 +411,7 @@ end
 -- Function to buff party members and the champion
 local function BuffParty()
     ClearTarget()
+    master_buff = true
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
     -- Check if buffing is throttled
@@ -1048,6 +1059,7 @@ end
                 if GetTime() - lastBuffCompleteTime >= BUFF_THROTTLE_DURATION then
                     BuffParty()
                 end
+
                 BuffInnerFire()
                 Levitate()
                 MountWithRele()
