@@ -5,6 +5,8 @@ local master_buff = false
 local master_drink = false
 local master_follow = false
 local championName = nil
+local lastBuffCompleteTime = 0
+local BUFF_THROTTLE_DURATION = 300 -- 10 minutes in seconds
 
 -- Global variables for configuration
 local isDrinkingMode = false
@@ -12,7 +14,7 @@ local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at this % mana
 local START_DRINKING_MANA_THRESHOLD = 70 -- Start drinking at this % mana
 local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below this % health even while drinking
 local HEALTH_THRESHOLD = 85 -- Heal if health is below this %
-local BANDAIDS_MANA_THRESHOLD = 100 -- use shield and renew if my mana is above this %
+local BANDAIDS_MANA_THRESHOLD = 90 -- use shield and renew if my mana is above this %
 local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
 local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
 local QDM_POT_MANA_THRESHOLD = 30 -- Threshold for QDM/POTS
@@ -99,8 +101,22 @@ local drinkBuffs = {
 -- Table of mana potions to search for
 local manaPotions = {
     "Mana Potion",
+    "Greater Mana Potion",
     -- Add more mana potion names here as needed
 }
+
+local itemBuffMap = {
+    -- Format: {itemName, buffName, targetType}
+    ["Scroll of Intellect"] = {"Intellect", "mana"},       -- Only for mana users
+    ["Scroll of Protection"] = {"Armor", "both"},         -- For all party members
+    ["Scroll of Strength"] = {"Strength", "non-mana"},    -- Only for non-mana users
+    ["Scroll of Strength"] = {"Agility", "non-mana"},    -- Only for non-mana users
+}
+
+local function IsManaUser(unit)
+    local powerType = UnitPowerType(unit)
+    return powerType == 0 -- 0 corresponds to mana
+end
 
 -- Function to check if the target is the champion
 local function IsChampion(unit)
@@ -188,6 +204,16 @@ local function HasBuff(unit, BuffList)
     return false
 end
 
+local function HasItemBuff(unit, buffName)
+    for i = 1, 16 do
+        local name = UnitBuff(unit, i)
+        if name and strfind(name, buffName) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Helper function to check for Drink Buffs
 local function CheckDrinkBuff()
     if not HasBuff("player", drinkBuffs) then
@@ -234,6 +260,42 @@ local function BuffUnitWithSpell(unit, spell)
     master_buff = false
     return false
 end
+
+-- Function to search bags for mana potions and use one when mana is below 40%
+local function UseManaPotion()
+    local mana = (UnitMana("player") / UnitManaMax("player")) * 100
+
+    -- Check if mana is below 40%
+    if mana < 40 then
+        -- Search through all bags
+        for b = 0, 4 do
+            for s = 1, GetContainerNumSlots(b) do
+                local itemLink = GetContainerItemLink(b, s)
+                if itemLink then
+                    -- Check if the item is in the mana potions table
+                    for _, potion in ipairs(manaPotions) do
+                        if strfind(itemLink, potion) then
+                            -- Check if the item is off cooldown
+                            local startTime, duration, isEnabled = GetContainerItemCooldown(b, s)
+                            if startTime == 0 and duration == 0 then
+                                -- Use the mana potion
+                                UseContainerItem(b, s)
+                                print("Heresy: Using " .. potion .. " to restore mana.")
+                                return true
+                            else
+                                print("Heresy: " .. potion .. " is on cooldown.")
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- end mana pot
 
 -- Function to buff a unit with Power Word: Fortitude and Divine Spirit
 local function BuffUnit(unit)
@@ -294,45 +356,113 @@ end
 -- Function to buff party members and the champion
 local function BuffParty()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
+
+    -- Check if buffing is throttled
+    if GetTime() - lastBuffCompleteTime < BUFF_THROTTLE_DURATION then
+        print("Heresy: Buffing is throttled. Skipping buff routine.")
+        return false
+    end
+
     if mana > DRINKING_MANA_THRESHOLD then
         master_drink = false
     end
     if master_drink then
-        return
+        return false
     end
     CheckDrinkBuff()
 
     -- Do not buff if drinking mode is active
     if isDrinkingMode then
         print("Heresy: buffparty: drink mode true, not buffing")
-        return
+        return false
     end
 
     -- Do not buff if mana is critically low
     if mana <= LOW_MANA_THRESHOLD then
         print("Heresy: buffparty: mana critical, not buffing")
-        return
+        return false
     end
 
-    -- Buff the champion first
-    BuffChampion()
 
     -- Buff the player
     if BuffUnit("player") then
-        return
+        return false
     end
 
     -- Buff party members
     for i = 1, 4 do
         local partyMember = "party" .. i
         if BuffUnit(partyMember) then
-            return
+            return false
         end
     end
+    -- Buff the champion first
+    BuffChampion()
+
+    -- If no buffing was needed, set the last buff complete time
+    lastBuffCompleteTime = GetTime()
+    print("Heresy: Buffing complete. Throttling for 10 minutes.")
+    return true
 end
 
 -- end BUFPARTY function
 
+-- buff with scrolls if available
+local function BuffPartyWithItems()
+    for itemName, itemData in pairs(itemBuffMap) do
+        local buffName = itemData[1]
+        local targetType = itemData[2]
+
+        -- Search through all bags
+        for b = 0, 4 do
+            for s = 1, GetContainerNumSlots(b) do
+                local itemLink = GetContainerItemLink(b, s)
+                if itemLink and strfind(itemLink, itemName) then
+                    -- Check if the item is off cooldown
+                    local startTime, duration, isEnabled = GetContainerItemCooldown(b, s)
+                    if startTime == 0 and duration == 0 then
+                        -- Buff the player first (if applicable)
+                        if (targetType == "both" or
+                            (targetType == "mana" and IsManaUser("player")) or
+                            (targetType == "non-mana" and not IsManaUser("player"))) then
+                            if not HasItemBuff("player", buffName) then
+                                UseContainerItem(b, s)
+                                SpellTargetUnit("player")
+                                print("Heresy: Using " .. itemLink .. " to buff player with " .. buffName)
+                            end
+                        end
+
+                        -- Buff party members (if applicable)
+                        for i = 1, 4 do
+                            local partyMember = "party" .. i
+                            if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
+                                local shouldBuff = false
+
+                                -- Check if the party member should receive the buff based on targetType
+                                if targetType == "both" then
+                                    shouldBuff = true
+                                elseif targetType == "mana" and IsManaUser(partyMember) then
+                                    shouldBuff = true
+                                elseif targetType == "non-mana" and not IsManaUser(partyMember) then
+                                    shouldBuff = true
+                                end
+
+                                -- Apply the buff if the party member should receive it and doesn't already have it
+                                if shouldBuff and not HasItemBuff(partyMember, buffName) then
+                                    UseContainerItem(b, s)
+                                    SpellTargetUnit(partyMember)
+                                    print("Heresy: Using " .. itemLink .. " to buff " .. UnitName(partyMember) .. " with " .. buffName)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- end buff scrolls
 
 -- Function to dispel debuffs from party members and myself
 local function DispelParty()
@@ -719,45 +849,12 @@ local function Levitate()
 
 
 
--- Function to search bags for mana potions and use one when mana is below 40%
-local function UseManaPotion()
-    local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-    -- Check if mana is below 40%
-    if mana < 40 then
-        -- Search through all bags
-        for b = 0, 4 do
-            for s = 1, GetContainerNumSlots(b) do
-                local itemLink = GetContainerItemLink(b, s)
-                if itemLink then
-                    -- Check if the item is in the mana potions table
-                    for _, potion in ipairs(manaPotions) do
-                        if strfind(itemLink, potion) then
-                            -- Check if the item is off cooldown
-                            local startTime, duration, isEnabled = GetContainerItemCooldown(b, s)
-                            if startTime == 0 and duration == 0 then
-                                -- Use the mana potion
-                                UseContainerItem(b, s)
-                                print("Heresy: Using " .. potion .. " to restore mana.")
-                                return true
-                            else
-                                print("Heresy: " .. potion .. " is on cooldown.")
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    return false
-end
-
--- end mana pot
 
 -- Function to check if "Rele" has the "Thalassian Unicorn" buff and mount/dismount accordingly
 local function MountWithRele()
     -- Target "Rele" (exact match)
+    if not master_buff then
     TargetByName("Rele", true)
 
     -- Check if the target is valid and is "Rele"
@@ -793,6 +890,7 @@ local function MountWithRele()
 
     -- Clear the target after checking
     ClearTarget()
+    end
 end
 
 -- end mount function
@@ -829,8 +927,17 @@ SlashCmdList["HERESY_CHAMP"] = function()
         SendChatMessage("Heresy: " .. championName .. " has been designated as the champion!", "PARTY")
 
     else
+        championName = nil
         print("Heresy: You must target a player to designate them as the champion.")
     end
+end
+
+-- Slash command to reset the last buff complete time and allow manual rebuffing
+SLASH_HERESY_REBUFF1 = "/heresy-rebuff"
+SlashCmdList["HERESY_REBUFF"] = function()
+    lastBuffCompleteTime = 0
+    print("Heresy: Buffing throttle reset. Attempting to rebuff now.")
+    BuffParty() -- Immediately attempt to rebuff
 end
 
 -- Main heresy slash command
@@ -855,12 +962,17 @@ SlashCmdList["HERESY"] = function()
 
 
             if not UnitAffectingCombat("player") then
-                BuffParty()
+
+            -- Buff Party
+                if GetTime() - lastBuffCompleteTime >= BUFF_THROTTLE_DURATION then
+                    BuffParty()
+                end
                 BuffInnerFire()
                 --Levitate()
                 MountWithRele()
             end
 
+            BuffPartyWithItems()
             FollowPartyMember()
 
 
