@@ -11,7 +11,7 @@ local BUFF_THROTTLE_DURATION = 300 -- 10 minutes in seconds
 -- Global variables for configuration
 local isDrinkingMode = false
 local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at this % mana
-local START_DRINKING_MANA_THRESHOLD = 70 -- Start drinking at this % mana
+local START_DRINKING_MANA_THRESHOLD = 80 -- Start drinking at this % mana
 local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below this % health even while drinking
 local HEALTH_THRESHOLD = 85 -- Heal if health is below this %
 local BANDAIDS_MANA_THRESHOLD = 90 -- use shield and renew if my mana is above this %
@@ -37,9 +37,9 @@ local SPELL_RENEW = "Renew"
 local SPELL_SMITE = "Smite"
 local SPELL_SHOOT = "Shoot"
 local SPELL_SWP = "Shadow Word: Pain"
-local SPELL_SWP2 = "Shadow Word: Pain(Rank 5)"
+local SPELL_SWP2 = "Shadow Word: Pain(Rank 6)"
 local SPELL_MIND_BLAST = "Mind Blast"
-local SPELL_MIND_BLAST2 = "Mind Blast(Rank 5)"
+local SPELL_MIND_BLAST2 = "Mind Blast(Rank 6)"
 local SPELL_MIND_FLAY = "Mind Flay"
 local SPELL_QDM = "Quel'dorei Meditation"
 local SPELL_PWS = "Power Word: Shield"
@@ -101,17 +101,60 @@ local drinkBuffs = {
 -- Table of mana potions to search for
 local manaPotions = {
     "Mana Potion",
-    "Greater Mana Potion",
     -- Add more mana potion names here as needed
 }
 
 local itemBuffMap = {
-    -- Format: {itemName, buffName, targetType}
-    ["Scroll of Intellect"] = {"Intellect", "mana"},       -- Only for mana users
-    ["Scroll of Protection"] = {"Armor", "both"},         -- For all party members
-    ["Scroll of Strength"] = {"Strength", "non-mana"},    -- Only for non-mana users
-    ["Scroll of Strength"] = {"Agility", "non-mana"},    -- Only for non-mana users
+    -- Format: {itemName, buffName, targetType, classes}
+    ["Scroll of Intellect"] = {"Intellect", "mana", {"MAGE", "PRIEST", "WARLOCK", "DRUID", "SHAMAN", "PALADIN", "HUNTER"}},  -- Intellect for mana users
+    ["Scroll of Protection"] = {"Armor", "both", nil},  -- Armor for all party members (no class restriction)
+    ["Scroll of Strength"] = {"Strength", "both", {"WARRIOR", "ROGUE", "PALADIN", "HUNTER"}},  -- Strength for melee classes
+    ["Scroll of Agility"] = {"Agility", "both", {"ROGUE", "HUNTER", "WARRIOR", "PALADIN"}},  -- Agility for agility-based classes
 }
+
+-- Table of buff synonyms
+local buffSynonyms = {
+    ["Intellect"] = {"Arcane Intellect"},  -- "Arcane Intellect" is synonymous with "Intellect"
+    ["Agility"] = {},                     -- No direct class buff synonym for "Agility"
+    -- Add more buff synonyms as needed
+}
+
+
+-- Helper function to check if a value exists in a table
+local function tContains(table, value)
+    for _, v in ipairs(table) do
+        if v == value then
+            return true
+        end
+    end
+    return false
+end
+
+-- Helper function to check if a unit has a specific buff or any of its synonyms
+local function HasItemBuff(unit, buffName)
+    -- Debug: Print the buff we're checking for
+    --prient("Heresy: Checking if " .. UnitName(unit) .. " has buff: " .. buffName)
+
+    -- Check if the unit has the buff (using buffed())
+    if buffed(buffName, unit) then
+        --prient("Heresy: " .. UnitName(unit) .. " already has " .. buffName)  -- Debug: Buff found
+        return true
+    end
+
+    -- Check for synonyms (using buffed())
+    if buffSynonyms[buffName] then
+        for _, synonym in ipairs(buffSynonyms[buffName]) do
+            --prient("Heresy: Checking for synonym: " .. synonym)  -- Debug: Print the synonym being checked
+            if buffed(synonym, unit) then
+                --prient("Heresy: " .. UnitName(unit) .. " already has synonym: " .. synonym)  -- Debug: Synonym found
+                return true
+            end
+        end
+    end
+
+    --prient("Heresy: " .. UnitName(unit) .. " does not have " .. buffName)  -- Debug: Buff not found
+    return false
+end
 
 local function IsManaUser(unit)
     local powerType = UnitPowerType(unit)
@@ -158,10 +201,10 @@ local function BuffChampion()
         if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
             CastSpellByName("Proclaim Champion")
             SpellTargetUnit("target")
-            print("Heresy: Casting Proclaim Champion on " .. championName)
+            --prient("Heresy: Casting Proclaim Champion on " .. championName)
             return
         else
-            print("Heresy: Proclaim Champion is on cooldown.")
+            --prient("Heresy: Proclaim Champion is on cooldown.")
             return
         end
     end
@@ -170,7 +213,7 @@ local function BuffChampion()
     if hasHolyChampion and not buffed("Champion's Grace", "target") then
         CastSpellByName("Champion's Grace")
         SpellTargetUnit("target")
-        print("Heresy: Casting Champion's Grace on " .. championName)
+        --prient("Heresy: Casting Champion's Grace on " .. championName)
     end
 end
 
@@ -204,22 +247,12 @@ local function HasBuff(unit, BuffList)
     return false
 end
 
-local function HasItemBuff(unit, buffName)
-    for i = 1, 16 do
-        local name = UnitBuff(unit, i)
-        if name and strfind(name, buffName) then
-            return true
-        end
-    end
-    return false
-end
-
 -- Helper function to check for Drink Buffs
 local function CheckDrinkBuff()
     if not HasBuff("player", drinkBuffs) then
         isDrinkingMode = false
         master_drink = false
-        --print("Heresy: drink buff not found, setting drink mode false")
+        ----prient("Heresy: drink buff not found, setting drink mode false")
     end
 end
 
@@ -262,6 +295,7 @@ local function BuffUnitWithSpell(unit, spell)
 end
 
 -- Function to search bags for mana potions and use one when mana is below 40%
+-- Function to search bags for mana potions and use one when mana is below 40%
 local function UseManaPotion()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
@@ -272,7 +306,7 @@ local function UseManaPotion()
             for s = 1, GetContainerNumSlots(b) do
                 local itemLink = GetContainerItemLink(b, s)
                 if itemLink then
-                    -- Check if the item is in the mana potions table
+                    -- Check if the item is in the mana potions table using strfind
                     for _, potion in ipairs(manaPotions) do
                         if strfind(itemLink, potion) then
                             -- Check if the item is off cooldown
@@ -280,10 +314,10 @@ local function UseManaPotion()
                             if startTime == 0 and duration == 0 then
                                 -- Use the mana potion
                                 UseContainerItem(b, s)
-                                print("Heresy: Using " .. potion .. " to restore mana.")
+                                --prient("Heresy: Using " .. itemLink .. " to restore mana.")
                                 return true
                             else
-                                print("Heresy: " .. potion .. " is on cooldown.")
+                                --prient("Heresy: " .. itemLink .. " is on cooldown.")
                             end
                         end
                     end
@@ -359,7 +393,7 @@ local function BuffParty()
 
     -- Check if buffing is throttled
     if GetTime() - lastBuffCompleteTime < BUFF_THROTTLE_DURATION then
-        print("Heresy: Buffing is throttled. Skipping buff routine.")
+        --prient("Heresy: Buffing is throttled. Skipping buff routine.")
         return false
     end
 
@@ -373,13 +407,13 @@ local function BuffParty()
 
     -- Do not buff if drinking mode is active
     if isDrinkingMode then
-        print("Heresy: buffparty: drink mode true, not buffing")
+        --prient("Heresy: buffparty: drink mode true, not buffing")
         return false
     end
 
     -- Do not buff if mana is critically low
     if mana <= LOW_MANA_THRESHOLD then
-        print("Heresy: buffparty: mana critical, not buffing")
+        --prient("Heresy: buffparty: mana critical, not buffing")
         return false
     end
 
@@ -401,7 +435,7 @@ local function BuffParty()
 
     -- If no buffing was needed, set the last buff complete time
     lastBuffCompleteTime = GetTime()
-    print("Heresy: Buffing complete. Throttling for 10 minutes.")
+    --prient("Heresy: Buffing complete. Throttling for 10 minutes.")
     return true
 end
 
@@ -410,8 +444,9 @@ end
 -- buff with scrolls if available
 local function BuffPartyWithItems()
     for itemName, itemData in pairs(itemBuffMap) do
-        local buffName = itemData[1]
+        local buffName = itemData[1]  -- The name of the buff (e.g., "Intellect", "Strength")
         local targetType = itemData[2]
+        local classes = itemData[3]  -- List of classes that should receive this buff
 
         -- Search through all bags
         for b = 0, 4 do
@@ -425,10 +460,14 @@ local function BuffPartyWithItems()
                         if (targetType == "both" or
                             (targetType == "mana" and IsManaUser("player")) or
                             (targetType == "non-mana" and not IsManaUser("player"))) then
-                            if not HasItemBuff("player", buffName) then
-                                UseContainerItem(b, s)
-                                SpellTargetUnit("player")
-                                print("Heresy: Using " .. itemLink .. " to buff player with " .. buffName)
+                            -- Check if the player's class is allowed to receive this buff
+                            local _, playerClass = UnitClass("player")
+                            if not classes or tContains(classes, playerClass) then
+                                if not HasItemBuff("player", buffName) then
+                                    UseContainerItem(b, s)
+                                    SpellTargetUnit("player")
+                                    --prient("Heresy: Using " .. itemLink .. " to buff player with " .. buffName)
+                                end
                             end
                         end
 
@@ -447,11 +486,15 @@ local function BuffPartyWithItems()
                                     shouldBuff = true
                                 end
 
-                                -- Apply the buff if the party member should receive it and doesn't already have it
-                                if shouldBuff and not HasItemBuff(partyMember, buffName) then
-                                    UseContainerItem(b, s)
-                                    SpellTargetUnit(partyMember)
-                                    print("Heresy: Using " .. itemLink .. " to buff " .. UnitName(partyMember) .. " with " .. buffName)
+                                -- Check if the party member's class is allowed to receive this buff
+                                local _, partyMemberClass = UnitClass(partyMember)
+                                if shouldBuff and (not classes or tContains(classes, partyMemberClass)) then
+                                    -- Apply the buff if the party member should receive it and doesn't already have it
+                                    if not HasItemBuff(partyMember, buffName) then
+                                        UseContainerItem(b, s)
+                                        SpellTargetUnit(partyMember)
+                                        --prient("Heresy: Using " .. itemLink .. " to buff " .. UnitName(partyMember) .. " with " .. buffName)
+                                    end
                                 end
                             end
                         end
@@ -461,7 +504,6 @@ local function BuffPartyWithItems()
         end
     end
 end
-
 -- end buff scrolls
 
 -- Function to dispel debuffs from party members and myself
@@ -513,9 +555,10 @@ local function CureDiseaseParty()
 end
 
 -- Function to heal party members
+-- Function to heal party members
 local function HealParty()
     if master_buff then
-        print("Heresy: we are buffing, not healing yet")
+        --prient("Heresy: we are buffing, not healing yet")
         return false
     end
 
@@ -523,11 +566,17 @@ local function HealParty()
 
     CheckDrinkBuff()
 
+    -- If out of combat and mana is below 90%, do not heal
+    if not UnitAffectingCombat("player") and mana < START_DRINKING_MANA_THRESHOLD then
+        --prient("Heresy: Out of combat and mana is below 90%. Not healing.")
+        return false
+    end
+
     -- If drinking mode is active, only heal in emergencies
     if isDrinkingMode then
         if mana >= DRINKING_MANA_THRESHOLD then
             isDrinkingMode = false
-            print("Heresy: healparty: drink mode set false")
+            --prient("Heresy: healparty: drink mode set false")
             return false
         end
 
@@ -599,7 +648,6 @@ local function HealParty()
             local spellIndex = GetSpellIndex(SPELL_PWS)
             -- local pws_currentTime = GetTime()
 
-
             -- If mana is above 90% and the target is not already buffed with Renew, cast Renew
             if mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_RENEW, lowestHealthUnit) then
                 CastSpellByName(SPELL_RENEW)
@@ -615,7 +663,6 @@ local function HealParty()
                 SpellTargetUnit(lowestHealthUnit)
                 return true
             end
-
 
             local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
             if SpellID then
@@ -709,7 +756,7 @@ local function FollowPartyMember()
     if isDrinkingMode then
         if mana >= DRINKING_MANA_THRESHOLD then
             isDrinkingMode = false
-            print("Heresy: follow function: drinkmode set false")
+            --prient("Heresy: follow function: drinkmode set false")
             return false
         end
     end
@@ -717,7 +764,7 @@ local function FollowPartyMember()
     if not isDrinkingMode and not master_drink then
         FollowByName("Rele", exactMatch)
         master_follow = true
-        -- print("Heresy: following executed")
+        -- --prient("Heresy: following executed")
     end
 
 end
@@ -742,7 +789,7 @@ local function OOM()
     -- If drinking mode is active and mana is above the drinking threshold, stop drinking
     if isDrinkingMode and mana >= DRINKING_MANA_THRESHOLD then
         isDrinkingMode = false
-        print("Heresy: OOM function, drink mode set false")
+        --prient("Heresy: OOM function, drink mode set false")
         return
     end
 
@@ -770,7 +817,7 @@ local function OOM()
 
     -- If mana is below 80%, drink
     if master_buff then
-        print("Heresy: we are buffing, skipping drink")
+        --prient("Heresy: we are buffing, skipping drink")
         return false
     end
 
@@ -870,22 +917,22 @@ local function MountWithRele()
             local spellIndex = GetSpellIndex("Thalassian Unicorn")
             if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
                 CastSpellByName("Thalassian Unicorn")
-                print("Heresy: Mounting up with Thalassian Unicorn.")
+                --prient("Heresy: Mounting up with Thalassian Unicorn.")
             else
-                print("Heresy: Thalassian Unicorn is on cooldown.")
+                --prient("Heresy: Thalassian Unicorn is on cooldown.")
             end
         -- If "Rele" does not have the buff and you do, dismount
         elseif not releHasBuff and playerHasBuff then
             local spellIndex = GetSpellIndex("Thalassian Unicorn")
             if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
                 CastSpellByName("Thalassian Unicorn")
-                print("Heresy: Dismounting Thalassian Unicorn.")
+                --prient("Heresy: Dismounting Thalassian Unicorn.")
             else
-                print("Heresy: Thalassian Unicorn is on cooldown.")
+                --prient("Heresy: Thalassian Unicorn is on cooldown.")
             end
         end
     else
-        print("Heresy: Rele is not found or is not a valid target.")
+        --prient("Heresy: Rele is not found or is not a valid target.")
     end
 
     -- Clear the target after checking
@@ -912,9 +959,9 @@ SLASH_HERESY_ASSIST1 = "/heresyassist"
 SlashCmdList["HERESY_ASSIST"] = function()
     assistmode = assistmode == 1 and 0 or 1
     if assistmode == 1 then
-        print("Heresy: Assist mode is now ON.")
+        --prient("Heresy: Assist mode is now ON.")
     else
-        print("Heresy: Assist mode is now OFF.")
+        --prient("Heresy: Assist mode is now OFF.")
     end
 end
 
@@ -923,12 +970,12 @@ SLASH_HERESY_CHAMP1 = "/heresy-champ"
 SlashCmdList["HERESY_CHAMP"] = function()
     if UnitExists("target") and UnitIsPlayer("target") then
         championName = UnitName("target")
-        print("Heresy: " .. championName .. " has been designated as the champion!")
-        SendChatMessage("Heresy: " .. championName .. " has been designated as the champion!", "PARTY")
+        --prient("Heresy: " .. championName .. " has been designated as the champion!")
+        --SendChatMessage("Heresy: " .. championName .. " has been designated as the champion!", "PARTY")
 
     else
         championName = nil
-        print("Heresy: You must target a player to designate them as the champion.")
+        --prient("Heresy: You must target a player to designate them as the champion.")
     end
 end
 
@@ -936,7 +983,7 @@ end
 SLASH_HERESY_REBUFF1 = "/heresy-rebuff"
 SlashCmdList["HERESY_REBUFF"] = function()
     lastBuffCompleteTime = 0
-    print("Heresy: Buffing throttle reset. Attempting to rebuff now.")
+    --prient("Heresy: Buffing throttle reset. Attempting to rebuff now.")
     BuffParty() -- Immediately attempt to rebuff
 end
 
@@ -944,11 +991,11 @@ end
 SLASH_HERESY1 = "/heresy"
 SlashCmdList["HERESY"] = function()
     if master_drink and UnitAffectingCombat("player") then
-        print("Heresy: canceling drinkmode due to combat")
+        --prient("Heresy: canceling drinkmode due to combat")
         master_drink = false
     end
     if master_buff and UnitAffectingCombat("player") then
-        print("Heresy: canceling buffmode due to combat")
+        --prient("Heresy: canceling buffmode due to combat")
         master_buff = false
     end
 
