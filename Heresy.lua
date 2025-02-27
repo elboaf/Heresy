@@ -12,7 +12,7 @@ local championName = leader
 local champGraceBuffed = false
 local champProclaimed = false
 local lastBuffCompleteTime = 0
-local BUFF_THROTTLE_DURATION = 60 -- 1 minutes in seconds
+local BUFF_THROTTLE_DURATION = 0 -- 1 minutes in seconds
 
 -- Global variables for configuration
 local isDrinkingMode = false
@@ -279,6 +279,9 @@ local function CheckDrinkBuff()
     if not HasBuff("player", drinkBuffs) then
         isDrinkingMode = false
         master_drink = false
+        return false
+    else
+        return true
         ----prient("Heresy: drink buff not found, setting drink mode false")
     end
 end
@@ -375,7 +378,7 @@ local function BuffUnit(unit)
             local start, duration = GetSpellCooldown(spellIndex, BOOKTYPE_SPELL)
             if start > 0 and duration > 0 then
                 -- Fear Ward is on cooldown, skip casting it
-                print("Heresy: Fear Ward is on cooldown. Skipping.")
+                -- print("Heresy: Fear Ward is on cooldown. Skipping.")
             else
                 -- Fear Ward is not on cooldown, attempt to cast it
                 if BuffUnitWithSpell(unit, SPELL_FWARD) then
@@ -383,7 +386,7 @@ local function BuffUnit(unit)
                 end
             end
         else
-            print("Heresy: Fear Ward spell index not found.")
+            --print("Heresy: Fear Ward spell index not found.")
         end
     end
     return false
@@ -465,11 +468,17 @@ local function BuffParty()
         --prient("Heresy: buffparty: mana critical, not buffing")
         return false
     end
+    
+    if not hasHolyChampion then
+        champGraceBuffed = false
+        champProclaimed = false
+    end
 
     -- Buff the champion first
     BuffChampion()
 
     -- Buff the player
+    ClearTarget()
     if BuffUnit("player") then
         return false
     end
@@ -482,6 +491,9 @@ local function BuffParty()
         end
     end
 
+    TargetByName(championName)
+    local hasHolyChampion = buffed("Holy Champion", "target")
+    ClearTarget()
     -- If no buffing was needed, set the last buff complete time
     lastBuffCompleteTime = GetTime()
     --prient("Heresy: Buffing complete. Throttling for 10 minutes.")
@@ -799,7 +811,7 @@ local function FollowPartyMember()
     if UnitIsDead("Player") then
         FollowByName(leader, exactMatch)
     end
-    if not master_follow then
+    if not master_follow and not CheckDrinkBuff() then
         FollowByName(leader, exactMatch)
         master_follow = true
     end
@@ -823,7 +835,7 @@ local function FollowPartyMember()
         end
     end
 
-    if not isDrinkingMode and not master_drink then
+    if not isDrinkingMode and not master_drink and not CheckDrinkBuff() then
         FollowByName(leader, exactMatch)
         master_follow = true
         -- --prient("Heresy: following executed")
