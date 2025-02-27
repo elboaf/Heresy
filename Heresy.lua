@@ -2,7 +2,7 @@
 Heresy = {}
 
 local leader = "Rele"
-local leaderMount = "Thalassian Unicorn"
+local leaderMount = "Summon Warhorse"
 local myMount = "Thalassian Unicorn"
 
 local master_buff = false
@@ -18,7 +18,7 @@ local BUFF_THROTTLE_DURATION = 60 -- 1 minutes in seconds
 local isDrinkingMode = false
 local isDrinkingNow = false
 local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at this % mana
-local START_DRINKING_MANA_THRESHOLD = 70 -- Start drinking at this % mana
+local START_DRINKING_MANA_THRESHOLD = 60 -- Start drinking at this % mana
 local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below this % health even while drinking
 local HEALTH_THRESHOLD = 85 -- Heal if health is below this %
 local BANDAIDS_MANA_THRESHOLD = 90 -- use shield and renew if my mana is above this %
@@ -26,7 +26,7 @@ local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
 local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
 local QDM_POT_MANA_THRESHOLD = 30 -- Threshold for QDM/POTS
 local MANA_ANNOUNCEMENT_THRESHOLD = 40 -- Threshold for announcing low mana
-local SHOOT_TOGGLE_COOLDOWN = 1.5 -- Toggle Shoot off after 1.5 seconds
+local SHOOT_TOGGLE_COOLDOWN = 1.6 -- Toggle Shoot off after 1.5 seconds
 local FLAY_DURATION = 3 -- Duration for Mind Flay
 
 local assistmode = 1
@@ -230,6 +230,7 @@ if not champGraceBuffed then
                 champProclaimed = true
             end -- end chat spam prevention
                 champGraceBuffed = false
+                lastBuffCompleteTime = 0
             --prient("Heresy: Casting Proclaim Champion on " .. championName)
             return
         else
@@ -364,6 +365,26 @@ local function BuffUnit(unit)
     end
     if BuffUnitWithSpell(unit, SPELL_SPIRIT) then
         return true
+    end
+        if BuffUnitWithSpell(unit, SPELL_SPROT) then
+        return true
+    end
+    if not buffed(SPELL_FWARD, unit) then
+        local spellIndex = GetSpellIndex(SPELL_FWARD)
+        if spellIndex then
+            local start, duration = GetSpellCooldown(spellIndex, BOOKTYPE_SPELL)
+            if start > 0 and duration > 0 then
+                -- Fear Ward is on cooldown, skip casting it
+                print("Heresy: Fear Ward is on cooldown. Skipping.")
+            else
+                -- Fear Ward is not on cooldown, attempt to cast it
+                if BuffUnitWithSpell(unit, SPELL_FWARD) then
+                    return true
+                end
+            end
+        else
+            print("Heresy: Fear Ward spell index not found.")
+        end
     end
     return false
 end
@@ -819,7 +840,7 @@ local hasAnnouncedDrinking = false
 local function OOM()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-    if mana < 40 then
+    if mana < 40 and UnitAffectingCombat("player") then
             if UseManaPotion() then
             return
         end
@@ -1031,6 +1052,8 @@ SLASH_HERESY_REBUFF1 = "/heresy-rebuff"
 SlashCmdList["HERESY_REBUFF"] = function()
     lastBuffCompleteTime = 0
     --prient("Heresy: Buffing throttle reset. Attempting to rebuff now.")
+    champGraceBuffed = false
+    champProclaimed = false
     BuffParty() -- Immediately attempt to rebuff
 end
 
