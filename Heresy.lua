@@ -229,6 +229,7 @@ if not champGraceBuffed then
                 SendChatMessage("Heresy: Proclaiming " .. championName .. " as the champion. One moment!", "PARTY")
                 champProclaimed = true
             end -- end chat spam prevention
+                champGraceBuffed = false
             --prient("Heresy: Casting Proclaim Champion on " .. championName)
             return
         else
