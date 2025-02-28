@@ -89,6 +89,7 @@ local debuffsToDispel = {
     "StrangleVines",
     "Slow",
     "AbominationExplosion",
+    "Shadow_Teleport",
     -- Add more debuff names here as needed
 }
 
