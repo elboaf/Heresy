@@ -1,37 +1,49 @@
--- Addon Name
+-- Addon Name: Heresy
+-- This addon is designed to automate various tasks for a Priest in World of Warcraft, such as buffing, healing, dispelling, and assisting party members.
+
 Heresy = {}
 
-local leader = "Rele"
-local leaderMount = "Summon Warhorse"
-local myMount = "Thalassian Unicorn"
+-- Leader and Mount Configuration
+local leader = "Rele" -- The name of the party leader to follow
+local leaderMount = "Summon Warhorse" -- The mount spell used by the leader
+local myMount = "Thalassian Unicorn" -- The mount spell used by the player
 
-local master_buff = false
-local master_drink = false
-local master_follow = false
-local championName = leader
-local champGraceBuffed = false
-local champProclaimed = false
-local lastBuffCompleteTime = 0
-local BUFF_THROTTLE_DURATION = 0 -- 1 minutes in seconds
+-- Configuration Variables for Optional Buffs
+local enableShadowProtection = false -- Tracks if Shadow Protection should be applied
+local enableFearWard = false -- Tracks if Fear Ward should be applied
 
--- Global variables for configuration
-local isDrinkingMode = false
-local isDrinkingNow = false
+-- Global State Variables
+local master_buff = false -- Tracks if the player is currently buffing
+local master_drink = false -- Tracks if the player is currently drinking
+local master_follow = false -- Tracks if the player is currently following the leader
+local championName = leader -- The name of the designated champion
+local champGraceBuffed = false -- Tracks if the champion has been buffed with "Champion's Grace"
+local champProclaimed = false -- Tracks if the champion has been proclaimed
+local lastBuffCompleteTime = 0 -- Tracks the last time buffing was completed
+local BUFF_THROTTLE_DURATION = 30 -- Throttle duration for buffing (in seconds)
+local buffThrottle = false -- Tracks if buffing is currently throttled
+local mounted = false -- Tracks if the player is mounted
+local inCombat = false -- Tracks if the player is in combat
+
+-- Configuration Variables
+local isDrinkingMode = false -- Tracks if the player is in drinking mode
+local isDrinkingNow = false -- Tracks if the player is currently drinking
 local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at this % mana
 local START_DRINKING_MANA_THRESHOLD = 60 -- Start drinking at this % mana
 local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below this % health even while drinking
 local HEALTH_THRESHOLD = 85 -- Heal if health is below this %
-local BANDAIDS_MANA_THRESHOLD = 90 -- use shield and renew if my mana is above this %
+local BANDAIDS_MANA_THRESHOLD = 90 -- Use shield and renew if mana is above this %
 local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
 local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
-local QDM_POT_MANA_THRESHOLD = 30 -- Threshold for QDM/POTS
+local QDM_POT_MANA_THRESHOLD = 30 -- Threshold for using Quel'dorei Meditation or mana potions
 local MANA_ANNOUNCEMENT_THRESHOLD = 40 -- Threshold for announcing low mana
-local SHOOT_TOGGLE_COOLDOWN = 1.6 -- Toggle Shoot off after 1.5 seconds
-local FLAY_DURATION = 3 -- Duration for Mind Flay
+local SHOOT_TOGGLE_COOLDOWN = 1.6 -- Cooldown for toggling Shoot (in seconds)
+local FLAY_DURATION = 3 -- Duration for Mind Flay (in seconds)
 
-local assistmode = 1
+-- Assist Mode Configuration
+local assistmode = 1 -- Tracks if assist mode is enabled (1 = on, 0 = off)
 
--- Addon Constants
+-- Spell Constants
 local SPELL_PWF = "Power Word: Fortitude"
 local SPELL_SPIRIT = "Divine Spirit"
 local SPELL_SPROT = "Shadow Protection"
@@ -55,24 +67,21 @@ local SPELL_PSCREAM = "Psychic Scream"
 local SPELL_INNER_FIRE = "Inner Fire"
 local SPELL_DISPEL = "Dispel Magic"
 local SPELL_CURE_DISEASE = "Cure Disease"
-local SPELL_LEVITATE = "Levitate"
 
--- Timing variables for Shoot toggle
-local lastShootToggleTime = 0
-local lastFlayTime = 0
+-- Timing Variables
+local lastShootToggleTime = 0 -- Tracks the last time Shoot was toggled
+local lastFlayTime = 0 -- Tracks the last time Mind Flay was cast
 
-local drinkstodrink = {
+-- Lists of Items and Buffs
+local drinkstodrink = { -- List of drink items
+    "Morning Glory",
     "Moonberry",
     "Sweet",
     "Melon",
     "Conjured",
 }
 
-local feathers = {
-    "Light Feather",
-}
-
-local PWS_DEBUFF= {
+local PWS_DEBUFF = { -- List of debuffs that prevent Power Word: Shield
     "AshesToAshes",
 }
 
@@ -90,6 +99,8 @@ local debuffsToDispel = {
     "Slow",
     "AbominationExplosion",
     "Shadow_Teleport",
+    "Shaman_Hex",
+    "SummonImp",
     -- Add more debuff names here as needed
 }
 
@@ -101,6 +112,7 @@ local diseasesToCure = {
     -- Add more disease debuff names here as needed
 }
 
+-- List of drink buffs
 local drinkBuffs = {
     "INV_Drink",  -- Matches any buff with "INV_Drink" in its texture path
     "Drink",      -- Matches any buff with "Drink" in its name or texture path
@@ -113,6 +125,7 @@ local manaPotions = {
     -- Add more mana potion names here as needed
 }
 
+-- Table of item buff mappings
 local itemBuffMap = {
     -- Format: {itemName, buffName, targetType, classes}
     ["Scroll of Intellect"] = {"Intellect", "mana", {"MAGE", "PRIEST", "WARLOCK", "DRUID", "SHAMAN", "PALADIN", "HUNTER"}},  -- Intellect for mana users
@@ -128,7 +141,6 @@ local buffSynonyms = {
     -- Add more buff synonyms as needed
 }
 
-
 -- Helper function to check if a value exists in a table
 local function tContains(table, value)
     for _, v in ipairs(table) do
@@ -141,30 +153,24 @@ end
 
 -- Helper function to check if a unit has a specific buff or any of its synonyms
 local function HasItemBuff(unit, buffName)
-    -- Debug: Print the buff we're checking for
-    --prient("Heresy: Checking if " .. UnitName(unit) .. " has buff: " .. buffName)
-
     -- Check if the unit has the buff (using buffed())
     if buffed(buffName, unit) then
-        --prient("Heresy: " .. UnitName(unit) .. " already has " .. buffName)  -- Debug: Buff found
         return true
     end
 
     -- Check for synonyms (using buffed())
     if buffSynonyms[buffName] then
         for _, synonym in ipairs(buffSynonyms[buffName]) do
-            --prient("Heresy: Checking for synonym: " .. synonym)  -- Debug: Print the synonym being checked
             if buffed(synonym, unit) then
-                --prient("Heresy: " .. UnitName(unit) .. " already has synonym: " .. synonym)  -- Debug: Synonym found
                 return true
             end
         end
     end
 
-    --prient("Heresy: " .. UnitName(unit) .. " does not have " .. buffName)  -- Debug: Buff not found
     return false
 end
 
+-- Helper function to check if a unit uses mana
 local function IsManaUser(unit)
     local powerType = UnitPowerType(unit)
     return powerType == 0 -- 0 corresponds to mana
@@ -193,53 +199,49 @@ local function BuffChampion()
     end
 
     -- Cast "Champion's Grace" if the champion has "Holy Champion"
-for i = 1, 4 do
+    for i = 1, 4 do
         local partyChamp = "party" .. i
         if UnitExists(partyChamp) and not UnitIsDeadOrGhost(partyChamp) and buffed("Holy Champion", partyChamp) and not buffed("Champion's Grace", partyChamp) then
-        CastSpellByName("Champion's Grace")
-        SpellTargetUnit(partyChamp)
-        champProclaimed = false -- champ was proclaimed in chat once, set false so we can proclaim the next champ later
-        champGraceBuffed = true
-    end
-end
-
-
-if not champGraceBuffed then
-    -- Check if the champion is in range and alive
-    if not UnitExists("target") or not IsChampion("target") or UnitIsDeadOrGhost("target") then
-        TargetByName(championName, true) -- Target the champion
-        if buffed("Champion's Grace", "target") then
+            CastSpellByName("Champion's Grace")
+            SpellTargetUnit(partyChamp)
+            champProclaimed = false -- Reset proclamation flag
             champGraceBuffed = true
         end
     end
 
-    if not IsChampion("target") then
-        return -- Champion is not targeted
-    end
+    if not champGraceBuffed then
+        -- Check if the champion is in range and alive
+        if not UnitExists("target") or not IsChampion("target") or UnitIsDeadOrGhost("target") then
+            TargetByName(championName, true) -- Target the champion
+            if buffed("Champion's Grace", "target") then
+                champGraceBuffed = true
+            end
+        end
 
-    -- Check if the champion has the "Holy Champion" buff
-    local hasHolyChampion = buffed("Holy Champion", "target")
+        if not IsChampion("target") then
+            return -- Champion is not targeted
+        end
 
-    -- Cast "Proclaim Champion" if the champion doesn't have "Holy Champion" and the spell is off cooldown
-    if not hasHolyChampion then
-        local spellIndex = GetSpellIndex("Proclaim Champion")
-        if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
-            CastSpellByName("Proclaim Champion")
-            SpellTargetUnit("target")
-            if not champProclaimed then -- chat spam prevention
-                SendChatMessage("Heresy: Proclaiming " .. championName .. " as the champion. One moment!", "PARTY")
-                champProclaimed = true
-            end -- end chat spam prevention
+        -- Check if the champion has the "Holy Champion" buff
+        local hasHolyChampion = buffed("Holy Champion", "target")
+
+        -- Cast "Proclaim Champion" if the champion doesn't have "Holy Champion" and the spell is off cooldown
+        if not hasHolyChampion then
+            local spellIndex = GetSpellIndex("Proclaim Champion")
+            if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+                CastSpellByName("Proclaim Champion")
+                SpellTargetUnit("target")
+                if not champProclaimed then -- Prevent chat spam
+                    champProclaimed = true
+                end
                 champGraceBuffed = false
                 lastBuffCompleteTime = 0
-            --prient("Heresy: Casting Proclaim Champion on " .. championName)
-            return
-        else
-            ClearTarget()
-            --prient("Heresy: Proclaim Champion is on cooldown.")
-            return
+                return
+            else
+                ClearTarget()
+                return
+            end
         end
-    end
     else
         return
     end
@@ -280,14 +282,12 @@ local function CheckDrinkBuff()
     if not HasBuff("player", drinkBuffs) then
         isDrinkingMode = false
         master_drink = false
+        isDrinkingNow = false
         return false
     else
         return true
-        ----prient("Heresy: drink buff not found, setting drink mode false")
     end
 end
-
-
 
 -- Helper function to check if a unit is within buffing range
 local function IsUnitInRange(unit)
@@ -325,13 +325,26 @@ local function BuffUnitWithSpell(unit, spell)
     return false
 end
 
--- Function to search bags for mana potions and use one when mana is below 40%
+-- Function to buff a unit with Shadow Protection
+local function BuffShadowProtection(unit)
+    if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
+        if not buffed(SPELL_SPROT, unit) then
+            CastSpellByName(SPELL_SPROT)
+            SpellTargetUnit(unit)
+            master_buff = true
+            return true
+        end
+    end
+    master_buff = false
+    return false
+end
+
 -- Function to search bags for mana potions and use one when mana is below 40%
 local function UseManaPotion()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
     -- Check if mana is below 40%
-    if mana < 40 then
+    if mana < 40 and UnitAffectingCombat("player") then
         -- Search through all bags
         for b = 0, 4 do
             for s = 1, GetContainerNumSlots(b) do
@@ -345,10 +358,7 @@ local function UseManaPotion()
                             if startTime == 0 and duration == 0 then
                                 -- Use the mana potion
                                 UseContainerItem(b, s)
-                                --prient("Heresy: Using " .. itemLink .. " to restore mana.")
                                 return true
-                            else
-                                --prient("Heresy: " .. itemLink .. " is on cooldown.")
                             end
                         end
                     end
@@ -360,202 +370,216 @@ local function UseManaPotion()
     return false
 end
 
--- end mana pot
-
--- Function to buff a unit with Power Word: Fortitude and Divine Spirit
 local function BuffUnit(unit)
-    if BuffUnitWithSpell(unit, SPELL_PWF) then
-        return true
-    end
-    if BuffUnitWithSpell(unit, SPELL_SPIRIT) then
-        return true
-    end
-        if BuffUnitWithSpell(unit, SPELL_SPROT) then
-        return true
-    end
-    if not buffed(SPELL_FWARD, unit) then
-        local spellIndex = GetSpellIndex(SPELL_FWARD)
-        if spellIndex then
-            local start, duration = GetSpellCooldown(spellIndex, BOOKTYPE_SPELL)
-            if start > 0 and duration > 0 then
-                -- Fear Ward is on cooldown, skip casting it
-                -- print("Heresy: Fear Ward is on cooldown. Skipping.")
-            else
-                -- Fear Ward is not on cooldown, attempt to cast it
-                if BuffUnitWithSpell(unit, SPELL_FWARD) then
-                    return true
+    if not isDrinkingNow then
+        if BuffUnitWithSpell(unit, SPELL_PWF) then
+            return true
+        end
+        if BuffUnitWithSpell(unit, SPELL_SPIRIT) then
+            return true
+        end
+        -- Only apply Shadow Protection if enabled
+        if enableShadowProtection and BuffShadowProtection(unit) then
+            return true
+        end
+        -- Only apply Fear Ward if enabled
+        if enableFearWard and not buffed(SPELL_FWARD, unit) then
+            local spellIndex = GetSpellIndex(SPELL_FWARD)
+            if spellIndex then
+                local start, duration = GetSpellCooldown(spellIndex, BOOKTYPE_SPELL)
+                if start > 0 and duration > 0 then
+                    -- Fear Ward is on cooldown, skip casting it
+                else
+                    -- Fear Ward is not on cooldown, attempt to cast it
+                    if BuffUnitWithSpell(unit, SPELL_FWARD) then
+                        return true
+                    end
                 end
             end
-        else
-            --print("Heresy: Fear Ward spell index not found.")
         end
+        return false
     end
-    return false
 end
 
 -- Function to check if all buffing is complete
 local function IsBuffingComplete()
-    if not BuffUnitWithSpell("player", SPELL_PWF) or not BuffUnitWithSpell("player", SPELL_SPIRIT) then
-        return false
-    end
+    if not isDrinkingNow then
+        if not BuffUnitWithSpell("player", SPELL_PWF) or not BuffUnitWithSpell("player", SPELL_SPIRIT) then
+            return false
+        end
 
-    for i = 1, 4 do
-        local partyMember = "party" .. i
-        if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
-            if not BuffUnitWithSpell(partyMember, SPELL_PWF) or not BuffUnitWithSpell(partyMember, SPELL_SPIRIT) then
-                return false
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
+                if not BuffUnitWithSpell(partyMember, SPELL_PWF) or not BuffUnitWithSpell(partyMember, SPELL_SPIRIT) then
+                    return false
+                end
             end
         end
-    end
 
-    return true
+        return true
+    end
 end
 
 -- Function to dispel a unit with Dispel Magic
 local function DispelUnit(unit)
-    if UnitExists(unit) and not UnitIsDeadOrGhost(unit) then
-        CastSpellByName(SPELL_DISPEL)
-        SpellTargetUnit(unit)
-        return true
+    if not isDrinkingNow then
+        if UnitExists(unit) and not UnitIsDeadOrGhost(unit) then
+            CastSpellByName(SPELL_DISPEL)
+            SpellTargetUnit(unit)
+            return true
+        end
+        return false
     end
-    return false
 end
 
 -- Function to cure a unit with Cure Disease
 local function CureDiseaseUnit(unit)
-    if UnitExists(unit) and not UnitIsDeadOrGhost(unit) then
-        CastSpellByName(SPELL_CURE_DISEASE)
-        SpellTargetUnit(unit)
-        return true
+    if not isDrinkingNow then
+        if UnitExists(unit) and not UnitIsDeadOrGhost(unit) then
+            CastSpellByName(SPELL_CURE_DISEASE)
+            SpellTargetUnit(unit)
+            return true
+        end
+        return false
     end
-    return false
 end
 
 -- Function to buff Inner Fire on the player
 local function BuffInnerFire()
-    if not buffed(SPELL_INNER_FIRE, "player") then
-        CastSpellByName(SPELL_INNER_FIRE)
+    if not isDrinkingNow then
+        if not buffed(SPELL_INNER_FIRE, "player") then
+            CastSpellByName(SPELL_INNER_FIRE)
+        end
     end
 end
 
--- Function to buff party members and the champion
+-- Function to check if buffing is throttled
+local function buffThrottleCheck()
+    if GetTime() - lastBuffCompleteTime < BUFF_THROTTLE_DURATION then
+        buffThrottle = true
+    else
+        buffThrottle = false
+    end
+end
+
 local function BuffParty()
+    if inCombat or mounted then  -- Do not buff if in combat or mounted
+        return
+    end
+    CheckDrinkBuff()
+
     ClearTarget()
     master_buff = true
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-    -- Check if buffing is throttled
-    if GetTime() - lastBuffCompleteTime < BUFF_THROTTLE_DURATION then
-        --prient("Heresy: Buffing is throttled. Skipping buff routine.")
-        return false
-    end
-
-    if mana > DRINKING_MANA_THRESHOLD then
-        master_drink = false
-    end
-    if master_drink then
-        return false
-    end
-    CheckDrinkBuff()
-
-    -- Do not buff if drinking mode is active
-    if isDrinkingMode then
-        --prient("Heresy: buffparty: drink mode true, not buffing")
-        return false
-    end
-
-    -- Do not buff if mana is critically low
-    if mana <= LOW_MANA_THRESHOLD then
-        --prient("Heresy: buffparty: mana critical, not buffing")
-        return false
-    end
-    
-    if not hasHolyChampion then
-        champGraceBuffed = false
-        champProclaimed = false
-    end
-
-    -- Buff the champion first
-    BuffChampion()
-
-    -- Buff the player
-    ClearTarget()
-    if BuffUnit("player") then
-        return false
-    end
-
-    -- Buff party members
-    for i = 1, 4 do
-        local partyMember = "party" .. i
-        if BuffUnit(partyMember) then
+    buffThrottle = false
+    if not isDrinkingNow then
+        if mana > DRINKING_MANA_THRESHOLD then
+            master_drink = false
+        end
+        if master_drink then
             return false
         end
-    end
+        CheckDrinkBuff()
 
-    TargetByName(championName)
-    local hasHolyChampion = buffed("Holy Champion", "target")
-    ClearTarget()
-    -- If no buffing was needed, set the last buff complete time
-    lastBuffCompleteTime = GetTime()
-    --prient("Heresy: Buffing complete. Throttling for 10 minutes.")
-    return true
+        -- Do not buff if drinking mode is active
+        if isDrinkingMode then
+            return false
+        end
+
+        -- Do not buff if mana is critically low
+        if mana <= LOW_MANA_THRESHOLD then
+            return false
+        end
+
+        if not hasHolyChampion then
+            champGraceBuffed = false
+            champProclaimed = false
+        end
+
+        -- Buff the champion first
+        BuffChampion()
+
+        -- Buff the player
+        ClearTarget()
+        if BuffUnit("player") then
+            return false
+        end
+        if not buffed(SPELL_INNER_FIRE, "player") and not isDrinkingNow then
+            CastSpellByName(SPELL_INNER_FIRE)
+        end
+
+        -- Buff party members
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if BuffUnit(partyMember) then
+                return false
+            end
+        end
+
+        TargetByName(championName)
+        local hasHolyChampion = buffed("Holy Champion", "target")
+        ClearTarget()
+        -- If no buffing was needed, set the last buff complete time
+        lastBuffCompleteTime = GetTime()
+        return true
+    end
 end
 
--- end BUFPARTY function
-
--- buff with scrolls if available
+-- Function to buff party members with scrolls if available
 local function BuffPartyWithItems()
-    for itemName, itemData in pairs(itemBuffMap) do
-        local buffName = itemData[1]  -- The name of the buff (e.g., "Intellect", "Strength")
-        local targetType = itemData[2]
-        local classes = itemData[3]  -- List of classes that should receive this buff
+    if not isDrinkingNow then
+        for itemName, itemData in pairs(itemBuffMap) do
+            local buffName = itemData[1]  -- The name of the buff (e.g., "Intellect", "Strength")
+            local targetType = itemData[2]
+            local classes = itemData[3]  -- List of classes that should receive this buff
 
-        -- Search through all bags
-        for b = 0, 4 do
-            for s = 1, GetContainerNumSlots(b) do
-                local itemLink = GetContainerItemLink(b, s)
-                if itemLink and strfind(itemLink, itemName) then
-                    -- Check if the item is off cooldown
-                    local startTime, duration, isEnabled = GetContainerItemCooldown(b, s)
-                    if startTime == 0 and duration == 0 then
-                        -- Buff the player first (if applicable)
-                        if (targetType == "both" or
-                            (targetType == "mana" and IsManaUser("player")) or
-                            (targetType == "non-mana" and not IsManaUser("player"))) then
-                            -- Check if the player's class is allowed to receive this buff
-                            local _, playerClass = UnitClass("player")
-                            if not classes or tContains(classes, playerClass) then
-                                if not HasItemBuff("player", buffName) then
-                                    UseContainerItem(b, s)
-                                    SpellTargetUnit("player")
-                                    --prient("Heresy: Using " .. itemLink .. " to buff player with " .. buffName)
+            -- Search through all bags
+            for b = 0, 4 do
+                for s = 1, GetContainerNumSlots(b) do
+                    local itemLink = GetContainerItemLink(b, s)
+                    if itemLink and strfind(itemLink, itemName) then
+                        -- Check if the item is off cooldown
+                        local startTime, duration, isEnabled = GetContainerItemCooldown(b, s)
+                        if startTime == 0 and duration == 0 then
+                            -- Buff the player first (if applicable)
+                            if (targetType == "both" or
+                                (targetType == "mana" and IsManaUser("player")) or
+                                (targetType == "non-mana" and not IsManaUser("player"))) then
+                                -- Check if the player's class is allowed to receive this buff
+                                local _, playerClass = UnitClass("player")
+                                if not classes or tContains(classes, playerClass) then
+                                    if not HasItemBuff("player", buffName) then
+                                        UseContainerItem(b, s)
+                                        SpellTargetUnit("player")
+                                    end
                                 end
                             end
-                        end
 
-                        -- Buff party members (if applicable)
-                        for i = 1, 4 do
-                            local partyMember = "party" .. i
-                            if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
-                                local shouldBuff = false
+                            -- Buff party members (if applicable)
+                            for i = 1, 4 do
+                                local partyMember = "party" .. i
+                                if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
+                                    local shouldBuff = false
 
-                                -- Check if the party member should receive the buff based on targetType
-                                if targetType == "both" then
-                                    shouldBuff = true
-                                elseif targetType == "mana" and IsManaUser(partyMember) then
-                                    shouldBuff = true
-                                elseif targetType == "non-mana" and not IsManaUser(partyMember) then
-                                    shouldBuff = true
-                                end
+                                    -- Check if the party member should receive the buff based on targetType
+                                    if targetType == "both" then
+                                        shouldBuff = true
+                                    elseif targetType == "mana" and IsManaUser(partyMember) then
+                                        shouldBuff = true
+                                    elseif targetType == "non-mana" and not IsManaUser(partyMember) then
+                                        shouldBuff = true
+                                    end
 
-                                -- Check if the party member's class is allowed to receive this buff
-                                local _, partyMemberClass = UnitClass(partyMember)
-                                if shouldBuff and (not classes or tContains(classes, partyMemberClass)) then
-                                    -- Apply the buff if the party member should receive it and doesn't already have it
-                                    if not HasItemBuff(partyMember, buffName) then
-                                        UseContainerItem(b, s)
-                                        SpellTargetUnit(partyMember)
-                                        --prient("Heresy: Using " .. itemLink .. " to buff " .. UnitName(partyMember) .. " with " .. buffName)
+                                    -- Check if the party member's class is allowed to receive this buff
+                                    local _, partyMemberClass = UnitClass(partyMember)
+                                    if shouldBuff and (not classes or tContains(classes, partyMemberClass)) then
+                                        -- Apply the buff if the party member should receive it and doesn't already have it
+                                        if not HasItemBuff(partyMember, buffName) then
+                                            UseContainerItem(b, s)
+                                            SpellTargetUnit(partyMember)
+                                        end
                                     end
                                 end
                             end
@@ -566,27 +590,28 @@ local function BuffPartyWithItems()
         end
     end
 end
--- end buff scrolls
 
 -- Function to dispel debuffs from party members and myself
 local function DispelParty()
-    if HasDebuff("player", debuffsToDispel) then
-        if UnitExists("target") and UnitCanAttack("player", "target") then
-            ClearTarget()
-        end
-        if DispelUnit("player") then
-            return
-        end
-    end
-
-    for i = 1, 4 do
-        local partyMember = "party" .. i
-        if HasDebuff(partyMember, debuffsToDispel) then
+    if not isDrinkingNow then
+        if HasDebuff("player", debuffsToDispel) then
             if UnitExists("target") and UnitCanAttack("player", "target") then
                 ClearTarget()
             end
-            if DispelUnit(partyMember) then
+            if DispelUnit("player") then
                 return
+            end
+        end
+
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if HasDebuff(partyMember, debuffsToDispel) then
+                if UnitExists("target") and UnitCanAttack("player", "target") then
+                    ClearTarget()
+                end
+                if DispelUnit(partyMember) then
+                    return
+                end
             end
         end
     end
@@ -594,33 +619,33 @@ end
 
 -- Function to cure diseases from party members and myself
 local function CureDiseaseParty()
-    if HasDebuff("player", diseasesToCure) then
-        if UnitExists("target") and UnitCanAttack("player", "target") then
-            ClearTarget()
-        end
-        if CureDiseaseUnit("player") then
-            return
-        end
-    end
-
-    for i = 1, 4 do
-        local partyMember = "party" .. i
-        if HasDebuff(partyMember, diseasesToCure) then
+    if not isDrinkingNow then
+        if HasDebuff("player", diseasesToCure) then
             if UnitExists("target") and UnitCanAttack("player", "target") then
                 ClearTarget()
             end
-            if CureDiseaseUnit(partyMember) then
+            if CureDiseaseUnit("player") then
                 return
+            end
+        end
+
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if HasDebuff(partyMember, diseasesToCure) then
+                if UnitExists("target") and UnitCanAttack("player", "target") then
+                    ClearTarget()
+                end
+                if CureDiseaseUnit(partyMember) then
+                    return
+                end
             end
         end
     end
 end
 
 -- Function to heal party members
--- Function to heal party members
 local function HealParty()
     if master_buff then
-        --prient("Heresy: we are buffing, not healing yet")
         return false
     end
 
@@ -630,7 +655,6 @@ local function HealParty()
 
     -- If out of combat and mana is below 90%, do not heal
     if not UnitAffectingCombat("player") and mana < START_DRINKING_MANA_THRESHOLD then
-        --prient("Heresy: Out of combat and mana is below 90%. Not healing.")
         return false
     end
 
@@ -638,7 +662,6 @@ local function HealParty()
     if isDrinkingMode then
         if mana >= DRINKING_MANA_THRESHOLD then
             isDrinkingMode = false
-            --prient("Heresy: healparty: drink mode set false")
             return false
         end
 
@@ -706,7 +729,6 @@ local function HealParty()
         end
 
         -- Proactively cast Renew on players under 90% health
-        -- Iterate through all party members (including the player)
         local unitsToCheck = {"player", "party1", "party2", "party3", "party4"}
         for _, unit in ipairs(unitsToCheck) do
             if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
@@ -748,10 +770,11 @@ local function HealParty()
     end
 end
 
--- end HEALPARTY function
-
 -- Function to assist a party member by casting Smite on their target
 local function AssistPartyMember()
+    if mounted then
+        return
+    end
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
     local currentTime = GetTime()
 
@@ -809,52 +832,46 @@ end
 
 -- Function to follow a party member
 local function FollowPartyMember()
-    if UnitIsDead("Player") then
-        FollowByName(leader, exactMatch)
-    end
-    if not master_follow and not CheckDrinkBuff() then
-        FollowByName(leader, exactMatch)
-        master_follow = true
-    end
+    if not isDrinkingNow then
+        if UnitIsDead("Player") then
+            FollowByName(leader, exactMatch)
+        end
+        if not master_follow and not CheckDrinkBuff() then
+            FollowByName(leader, exactMatch)
+            master_follow = true
+        end
 
-    local mana = (UnitMana("player") / UnitManaMax("player")) * 100
-    if mana > DRINKING_MANA_THRESHOLD then
-        master_drink = false
-    end
-    if master_drink then
-        return
-    end
+        local mana = (UnitMana("player") / UnitManaMax("player")) * 100
+        if mana > DRINKING_MANA_THRESHOLD then
+            master_drink = false
+        end
+        if master_drink then
+            return
+        end
 
-    CheckDrinkBuff()
+        CheckDrinkBuff()
 
-    -- If drinking mode is active, only heal in emergencies
-    if isDrinkingMode then
-        if mana >= DRINKING_MANA_THRESHOLD then
-            isDrinkingMode = false
-            --prient("Heresy: follow function: drinkmode set false")
-            return false
+        -- If drinking mode is active, only heal in emergencies
+        if isDrinkingMode then
+            if mana >= DRINKING_MANA_THRESHOLD then
+                isDrinkingMode = false
+                return false
+            end
+        end
+
+        if not isDrinkingMode and not master_drink and not CheckDrinkBuff() then
+            FollowByName(leader, exactMatch)
+            master_follow = true
         end
     end
-
-    if not isDrinkingMode and not master_drink and not CheckDrinkBuff() then
-        FollowByName(leader, exactMatch)
-        master_follow = true
-        -- --prient("Heresy: following executed")
-    end
-
 end
 
-
--- Add a flag to track if the drinking announcement has been made during the current combat
-local hasAnnouncedDrinking = false
-
--- Function to handle out of mana logic
 -- Function to handle out of mana logic
 local function OOM()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
     if mana < 40 and UnitAffectingCombat("player") then
-            if UseManaPotion() then
+        if UseManaPotion() then
             return
         end
     end
@@ -864,7 +881,6 @@ local function OOM()
     -- If drinking mode is active and mana is above the drinking threshold, stop drinking
     if isDrinkingMode and mana >= DRINKING_MANA_THRESHOLD then
         isDrinkingMode = false
-        --prient("Heresy: OOM function, drink mode set false")
         return
     end
 
@@ -872,8 +888,7 @@ local function OOM()
     if mana <= LOW_MANA_THRESHOLD and not UnitAffectingCombat("player") then
         if not HasBuff("player", drinkBuffs) then
             if not isDrinkingNow then
-            SendChatMessage("Heresy: CRITICALLY LOW MANA -- Drinking immediately...", "PARTY")
-            isDrinkingNow = true
+                isDrinkingNow = true
             end
             for b = 0, 4 do
                 for s = 1, GetContainerNumSlots(b) do
@@ -895,7 +910,6 @@ local function OOM()
 
     -- If mana is below 80%, drink
     if master_buff then
-        --prient("Heresy: we are buffing, skipping drink")
         return false
     end
 
@@ -905,8 +919,7 @@ local function OOM()
         end
         if not HasBuff("player", drinkBuffs) then
             if not isDrinkingNow then
-            SendChatMessage("Heresy: LOW MANA -- Drinking...", "PARTY")
-            isDrinkingNow = true
+                isDrinkingNow = true
             end
             for b = 0, 4 do
                 for s = 1, GetContainerNumSlots(b) do
@@ -946,88 +959,157 @@ local function OOM()
 
     -- Announce low mana during combat
     if UnitAffectingCombat("player") and mana < MANA_ANNOUNCEMENT_THRESHOLD and not hasAnnouncedDrinking then
-        SendChatMessage("Heresy: LOW MANA -- I need to drink after combat!", "PARTY")
+        SendChatMessage("LOW MANA -- I need to drink after combat!", "PARTY")
         hasAnnouncedDrinking = true
     end
 end
 
--- end of OOM function
+local function mountedSanity()
+    local playerHasBuffSanity = buffed(myMount, "player")
+    if playerHasBuffSanity then
+        mounted = true
+    else
+        mounted = false
+    end
+end
 
--- levitate function for style :)
-local function Levitate()
-            for b = 0, 4 do
-                for s = 1, GetContainerNumSlots(b) do
-                    local itemLink = GetContainerItemLink(b, s)
-                    if itemLink then
-                        for _, feather in ipairs(feathers) do
-                            if strfind(itemLink, feather) then
-                                if not buffed("Levitate", "player") then
-                                    CastSpellByName(SPELL_LEVITATE)
-                                    return
-                                end
-                            end
-                        end
-                    end
+-- Function to check if the player is drinking and update the drinking state
+local function isDrinkingSanity()
+    if HasBuff("player", drinkBuffs) then
+        isDrinkingNow = true
+    else
+        isDrinkingNow = false
+    end
+end
+
+-- Function to check if the player is in combat and update the combat state
+local function isCombatSanity()
+    if UnitAffectingCombat("player") then
+        inCombat = true
+    else
+        inCombat = false
+    end
+end
+
+local function MountWithRele()
+    CheckDrinkBuff()
+    -- Target leader (exact match)
+    if not master_buff then
+        TargetByName(leader, true)
+
+        -- Check if the target is valid and is leader
+        if UnitExists("target") and UnitIsPlayer("target") and UnitName("target") == leader then
+            -- Check if leader has the leaderMount buff
+            local releHasBuff = buffed(leaderMount, "target")
+
+            -- Check if you have the leaderMount buff
+            local playerHasBuff = buffed(myMount, "player")
+
+            -- If leader has the buff and you don't, mount up
+            if releHasBuff and not playerHasBuff then
+                local spellIndex = GetSpellIndex(myMount)
+                if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+                    CastSpellByName(myMount)
+                    mounted = true
+                end
+            -- If leader does not have the buff and you do, dismount
+            elseif not releHasBuff and playerHasBuff then
+                local spellIndex = GetSpellIndex(myMount)
+                if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+                    CastSpellByName(myMount)
+                    mounted = false
                 end
             end
         end
 
-
--- end levitate 
-
-
-
-
-
--- Function to check if leader has the leaderMount buff and mount/dismount accordingly
-local function MountWithRele()
-    -- Target leader (exact match)
-    if not master_buff then
-    TargetByName(leader, true)
-
-    -- Check if the target is valid and is leader
-    if UnitExists("target") and UnitIsPlayer("target") and UnitName("target") == leader then
-        -- Check if leader has the leaderMount buff
-        local releHasBuff = buffed(leaderMount, "target")
-
-        -- Check if you have the leaderMount buff
-        local playerHasBuff = buffed(myMount, "player")
-
-        -- If leader has the buff and you don't, mount up
-        if releHasBuff and not playerHasBuff then
-            local spellIndex = GetSpellIndex(myMount)
-            if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
-                CastSpellByName(myMount)
-                --prient("Heresy: Mounting up with Thalassian Unicorn.")
-            else
-                --prient("Heresy: Thalassian Unicorn is on cooldown.")
-            end
-        -- If leader does not have the buff and you do, dismount
-        elseif not releHasBuff and playerHasBuff then
-            local spellIndex = GetSpellIndex(myMount)
-            if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
-                CastSpellByName(myMount)
-                --prient("Heresy: Dismounting Thalassian Unicorn.")
-            else
-                --prient("Heresy: Thalassian Unicorn is on cooldown.")
-            end
-        end
-    else
-        --prient("Heresy: Rele is not found or is not a valid target.")
-    end
-
-    -- Clear the target after checking
-    ClearTarget()
+        -- Clear the target after checking
+        ClearTarget()
     end
 end
-
--- end mount function
 
 -- Event handler to reset the announcement flag when combat ends
 local function OnEvent(self, event, ...)
     if event == "PLAYER_REGEN_ENABLED" then
         hasAnnouncedDrinking = false
     end
+end
+
+-- Helper function to check for dead party members and resurrect them
+local function ResurrectDeadPartyMembers()
+    -- Check if the player is in combat or drinking
+    if UnitAffectingCombat("player") or isDrinkingNow then
+        return false
+    end
+
+    -- Check if the player has the "Resurrection" spell
+    local resurrectionSpell = "Resurrection"
+    local spellIndex = GetSpellIndex(resurrectionSpell)
+    if not spellIndex then
+        return false
+    end
+
+    -- Check if the spell is on cooldown
+    local startTime, duration = GetSpellCooldown(spellIndex, BOOKTYPE_SPELL)
+    if startTime > 0 and duration > 0 then
+        return false
+    end
+
+    -- Iterate through party members
+    for i = 1, 4 do
+        local partyMember = "party" .. i
+        if UnitExists(partyMember) and UnitIsDeadOrGhost(partyMember) then
+            -- Check if the party member is in range
+            if CheckInteractDistance(partyMember, 4) then
+                -- Cast Resurrection on the dead party member
+                CastSpellByName(resurrectionSpell)
+                SpellTargetUnit(partyMember)
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+-- Helper function to accept resurrection when dead
+local function AcceptResurrection()
+    -- Check if the player is dead or a ghost
+    if not UnitIsDeadOrGhost("player") then
+        return false
+    end
+
+    -- Check if a resurrection popup is active
+    local resurrectionFrame = StaticPopup_Visible("RESURRECT")
+    if resurrectionFrame then
+        -- Accept the resurrection
+        StaticPopup_OnClick(StaticPopup_FindVisible("RESURRECT"), 1)
+        return true
+    end
+
+    return false
+end
+
+-- Function to log boolean variables for debugging
+local function LogBooleanVariables()
+    local booleanVariables = {
+        master_drink = master_drink,
+        inCombat = inCombat,
+        isDrinkingMode = isDrinkingMode,
+        isDrinkingNow = isDrinkingNow,
+        master_buff = master_buff,
+        mounted = mounted,
+        buffThrottle = buffThrottle,
+        master_follow = master_follow,
+        champGraceBuffed = champGraceBuffed,
+        champProclaimed = champProclaimed,
+        hasAnnouncedDrinking = hasAnnouncedDrinking,
+    }
+
+    print("------start-variable-dump--------")
+    for varName, varValue in pairs(booleanVariables) do
+        print(varName .. ": " .. tostring(varValue))
+    end
+    print("---------------------------------")
 end
 
 -- Create a frame to listen for combat events
@@ -1040,9 +1122,9 @@ SLASH_HERESY_ASSIST1 = "/heresyassist"
 SlashCmdList["HERESY_ASSIST"] = function()
     assistmode = assistmode == 1 and 0 or 1
     if assistmode == 1 then
-        print("Heresy: Assist mode is now ON.")
+        print("Assist mode is now ON.")
     else
-        print("Heresy: Assist mode is now OFF.")
+        print("Assist mode is now OFF.")
     end
 end
 
@@ -1051,12 +1133,9 @@ SLASH_HERESY_CHAMP1 = "/heresy-champ"
 SlashCmdList["HERESY_CHAMP"] = function()
     if UnitExists("target") and UnitIsPlayer("target") then
         championName = UnitName("target")
-        print("Heresy: " .. championName .. " has been designated as the champion!")
-        --SendChatMessage("Heresy: " .. championName .. " has been designated as the champion!", "PARTY")
-
+        print("" .. championName .. " has been designated as the champion!")
     else
         championName = nil
-        --print("Heresy: You must target a player to designate them as the champion.")
     end
 end
 
@@ -1064,24 +1143,54 @@ end
 SLASH_HERESY_REBUFF1 = "/heresy-rebuff"
 SlashCmdList["HERESY_REBUFF"] = function()
     lastBuffCompleteTime = 0
-    --prient("Heresy: Buffing throttle reset. Attempting to rebuff now.")
     champGraceBuffed = false
     champProclaimed = false
+    isDrinkingMode = false
+    isDrinkingNow = false
+    CheckDrinkBuff()
     BuffParty() -- Immediately attempt to rebuff
+    FollowPartyMember()
 end
+
+-- Slash command to toggle Shadow Protection
+SLASH_HERESY_SHADOWPROT1 = "/heresy-shadowprot"
+SlashCmdList["HERESY_SHADOWPROT"] = function()
+    enableShadowProtection = not enableShadowProtection
+    if enableShadowProtection then
+        print("Shadow Protection is now ENABLED.")
+    else
+        print("Shadow Protection is now DISABLED.")
+    end
+end
+
+-- Slash command to toggle Fear Ward
+SLASH_HERESY_FEARWARD1 = "/heresy-fearward"
+SlashCmdList["HERESY_FEARWARD"] = function()
+    enableFearWard = not enableFearWard
+    if enableFearWard then
+        print("Fear Ward is now ENABLED.")
+    else
+        print("Fear Ward is now DISABLED.")
+    end
+end
+
 
 -- Main heresy slash command
 SLASH_HERESY1 = "/heresy"
 SlashCmdList["HERESY"] = function()
-if UnitIsDead("Player") then
-    FollowPartyMember()
-end
+    if UnitIsDead("Player") then
+        FollowPartyMember()
+    end
+
+    mountedSanity()
+    buffThrottleCheck()
+    isDrinkingSanity()
+    isCombatSanity()
+
     if master_drink and UnitAffectingCombat("player") then
-        --prient("Heresy: canceling drinkmode due to combat")
         master_drink = false
     end
     if master_buff and UnitAffectingCombat("player") then
-        --prient("Heresy: canceling buffmode due to combat")
         master_buff = false
     end
 
@@ -1093,23 +1202,19 @@ end
     if not healingNeeded then
         local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
-
-            if not UnitAffectingCombat("player") then
-
+        if not UnitAffectingCombat("player") then
             -- Buff Party
-                if GetTime() - lastBuffCompleteTime >= BUFF_THROTTLE_DURATION then
-                    BuffParty()
-                end
-
-                BuffInnerFire()
-                Levitate()
-                MountWithRele()
+            if GetTime() - lastBuffCompleteTime >= BUFF_THROTTLE_DURATION and not isDrinkingNow then
+                BuffParty()
+                BuffPartyWithItems()
             end
+            MountWithRele()
+            ResurrectDeadPartyMembers()
+        end
 
-            BuffPartyWithItems()
+        if not isDrinkingNow then
             FollowPartyMember()
-
-
+        end
 
         if assistmode == 1 then
             AssistPartyMember()
