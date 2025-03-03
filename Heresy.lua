@@ -7,6 +7,8 @@ Heresy = {}
 local leader = "Rele" -- The name of the party leader to follow
 local leaderMount = "Summon Warhorse" -- The mount spell used by the leader
 local myMount = "Thalassian Unicorn" -- The mount spell used by the player
+local champBuff = "Empower Champion" -- The spell used to buff the champion
+
 
 -- Configuration Variables for Optional Buffs
 local enableShadowProtection = false -- Tracks if Shadow Protection should be applied
@@ -37,7 +39,7 @@ local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
 local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
 local QDM_POT_MANA_THRESHOLD = 30 -- Threshold for using Quel'dorei Meditation or mana potions
 local MANA_ANNOUNCEMENT_THRESHOLD = 40 -- Threshold for announcing low mana
-local SHOOT_TOGGLE_COOLDOWN = 1.6 -- Cooldown for toggling Shoot (in seconds)
+local SHOOT_TOGGLE_COOLDOWN = 1.7 -- Cooldown for toggling Shoot (in seconds)
 local FLAY_DURATION = 3 -- Duration for Mind Flay (in seconds)
 
 -- Assist Mode Configuration
@@ -56,9 +58,9 @@ local SPELL_RENEW = "Renew"
 local SPELL_SMITE = "Smite"
 local SPELL_SHOOT = "Shoot"
 local SPELL_SWP = "Shadow Word: Pain"
-local SPELL_SWP2 = "Shadow Word: Pain(Rank 6)"
+local SPELL_SWP2 = "Shadow Word: Pain(Rank 7)"
 local SPELL_MIND_BLAST = "Mind Blast"
-local SPELL_MIND_BLAST2 = "Mind Blast(Rank 6)"
+local SPELL_MIND_BLAST2 = "Mind Blast(Rank 8)"
 local SPELL_MIND_FLAY = "Mind Flay"
 local SPELL_QDM = "Quel'dorei Meditation"
 local SPELL_PWS = "Power Word: Shield"
@@ -101,6 +103,7 @@ local debuffsToDispel = {
     "Shadow_Teleport",
     "Shaman_Hex",
     "SummonImp",
+    "Taunt",
     -- Add more debuff names here as needed
 }
 
@@ -201,8 +204,8 @@ local function BuffChampion()
     -- Cast "Champion's Grace" if the champion has "Holy Champion"
     for i = 1, 4 do
         local partyChamp = "party" .. i
-        if UnitExists(partyChamp) and not UnitIsDeadOrGhost(partyChamp) and buffed("Holy Champion", partyChamp) and not buffed("Champion's Grace", partyChamp) then
-            CastSpellByName("Champion's Grace")
+        if UnitExists(partyChamp) and not UnitIsDeadOrGhost(partyChamp) and buffed("Holy Champion", partyChamp) and not buffed(champBuff, partyChamp) then
+            CastSpellByName(champBuff)
             SpellTargetUnit(partyChamp)
             champProclaimed = false -- Reset proclamation flag
             champGraceBuffed = true
@@ -213,7 +216,7 @@ local function BuffChampion()
         -- Check if the champion is in range and alive
         if not UnitExists("target") or not IsChampion("target") or UnitIsDeadOrGhost("target") then
             TargetByName(championName, true) -- Target the champion
-            if buffed("Champion's Grace", "target") then
+            if buffed(champBuff, "target") then
                 champGraceBuffed = true
             end
         end
