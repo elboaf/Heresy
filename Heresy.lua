@@ -8,6 +8,7 @@ local leader = "Rele" -- The name of the party leader to follow
 local leaderMount = "Summon Warhorse" -- The mount spell used by the leader
 local myMount = "Thalassian Unicorn" -- The mount spell used by the player
 local champBuff = "Empower Champion" -- The spell used to buff the champion
+local enableFollow = true -- Tracks if the follow functionality is enabled
 
 
 -- Configuration Variables for Optional Buffs
@@ -833,9 +834,8 @@ local function AssistPartyMember()
     end
 end
 
--- Function to follow a party member
 local function FollowPartyMember()
-    if not isDrinkingNow then
+    if not isDrinkingNow and enableFollow then  -- Only follow if follow is enabled
         if UnitIsDead("Player") then
             FollowByName(leader, exactMatch)
         end
@@ -1174,6 +1174,17 @@ SlashCmdList["HERESY_FEARWARD"] = function()
         print("Fear Ward is now ENABLED.")
     else
         print("Fear Ward is now DISABLED.")
+    end
+end
+
+-- Slash command to toggle follow functionality
+SLASH_HERESY_FOLLOW1 = "/heresy-follow"
+SlashCmdList["HERESY_FOLLOW"] = function()
+    enableFollow = not enableFollow
+    if enableFollow then
+        print("Follow functionality is now ENABLED.")
+    else
+        print("Follow functionality is now DISABLED.")
     end
 end
 
