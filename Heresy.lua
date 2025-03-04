@@ -9,6 +9,7 @@ local leaderMount = "Summon Warhorse" -- The mount spell used by the leader
 local myMount = "Thalassian Unicorn" -- The mount spell used by the player
 local champBuff = "Empower Champion" -- The spell used to buff the champion
 local enableFollow = true -- Tracks if the follow functionality is enabled
+local enableChampionBuff = true -- Tracks if champion buffing is enabled
 
 
 -- Configuration Variables for Optional Buffs
@@ -198,6 +199,10 @@ end
 
 -- Function to buff the champion with "Proclaim Champion" and "Champion's Grace"
 local function BuffChampion()
+    if not enableChampionBuff then
+        return -- Champion buffing is disabled
+    end
+
     if not championName then
         return -- No champion designated
     end
@@ -1188,6 +1193,16 @@ SlashCmdList["HERESY_FOLLOW"] = function()
     end
 end
 
+-- Slash command to toggle champion buffing
+SLASH_HERESY_CHAMPIONBUFF1 = "/heresy-championbuff"
+SlashCmdList["HERESY_CHAMPIONBUFF"] = function()
+    enableChampionBuff = not enableChampionBuff
+    if enableChampionBuff then
+        print("Champion buffing is now ENABLED.")
+    else
+        print("Champion buffing is now DISABLED.")
+    end
+end
 
 -- Main heresy slash command
 SLASH_HERESY1 = "/heresy"
