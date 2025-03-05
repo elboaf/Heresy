@@ -71,6 +71,12 @@ local SPELL_PSCREAM = "Psychic Scream"
 local SPELL_INNER_FIRE = "Inner Fire"
 local SPELL_DISPEL = "Dispel Magic"
 local SPELL_CURE_DISEASE = "Cure Disease"
+local SPELL_INNER_FOCUS = "Inner Focus"
+
+local lastDispelTime = 0
+local lastCureDiseaseTime = 0
+local DISPEL_THROTTLE_DURATION = 3 -- Throttle duration for dispels (in seconds)
+local CURE_DISEASE_THROTTLE_DURATION = 3 -- Throttle duration for curing diseases (in seconds)
 
 -- Timing Variables
 local lastShootToggleTime = 0 -- Tracks the last time Shoot was toggled
@@ -114,6 +120,7 @@ local diseasesToCure = {
     "NullifyDisease",
     "CallofBone",
     "CreepingPlague",
+    "HarmUndeadAura",
     -- Add more disease debuff names here as needed
 }
 
@@ -353,7 +360,7 @@ local function UseManaPotion()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
     -- Check if mana is below 40%
-    if mana < 40 and UnitAffectingCombat("player") then
+    if mana < 60 and UnitAffectingCombat("player") then
         -- Search through all bags
         for b = 0, 4 do
             for s = 1, GetContainerNumSlots(b) do
@@ -600,14 +607,19 @@ local function BuffPartyWithItems()
     end
 end
 
--- Function to dispel debuffs from party members and myself
 local function DispelParty()
     if not isDrinkingNow then
+        local currentTime = GetTime()
+        if currentTime - lastDispelTime < DISPEL_THROTTLE_DURATION then
+            return
+        end
+
         if HasDebuff("player", debuffsToDispel) then
             if UnitExists("target") and UnitCanAttack("player", "target") then
                 ClearTarget()
             end
             if DispelUnit("player") then
+                lastDispelTime = currentTime
                 return
             end
         end
@@ -619,6 +631,7 @@ local function DispelParty()
                     ClearTarget()
                 end
                 if DispelUnit(partyMember) then
+                    lastDispelTime = currentTime
                     return
                 end
             end
@@ -626,14 +639,19 @@ local function DispelParty()
     end
 end
 
--- Function to cure diseases from party members and myself
 local function CureDiseaseParty()
     if not isDrinkingNow then
+        local currentTime = GetTime()
+        if currentTime - lastCureDiseaseTime < CURE_DISEASE_THROTTLE_DURATION then
+            return
+        end
+
         if HasDebuff("player", diseasesToCure) then
             if UnitExists("target") and UnitCanAttack("player", "target") then
                 ClearTarget()
             end
             if CureDiseaseUnit("player") then
+                lastCureDiseaseTime = currentTime
                 return
             end
         end
@@ -645,6 +663,7 @@ local function CureDiseaseParty()
                     ClearTarget()
                 end
                 if CureDiseaseUnit(partyMember) then
+                    lastCureDiseaseTime = currentTime
                     return
                 end
             end
@@ -652,7 +671,6 @@ local function CureDiseaseParty()
     end
 end
 
--- Function to heal party members
 local function HealParty()
     if master_buff then
         return false
@@ -665,6 +683,17 @@ local function HealParty()
     -- If out of combat and mana is below 90%, do not heal
     if not UnitAffectingCombat("player") and mana < START_DRINKING_MANA_THRESHOLD then
         return false
+    end
+
+    -- Check if Inner Focus is available and mana is below 80%
+    local innerFocusSpellIndex = GetSpellIndex(SPELL_INNER_FOCUS)
+    local innerFocusReady = innerFocusSpellIndex and GetSpellCooldown(innerFocusSpellIndex, BOOKTYPE_SPELL) < 1
+    local hasInnerFocusBuff = buffed(SPELL_INNER_FOCUS, "player")
+
+    -- Cast Inner Focus if mana is below 80% and it's ready
+    if mana < 60 and innerFocusReady and not hasInnerFocusBuff then
+        CastSpellByName(SPELL_INNER_FOCUS)
+        hasInnerFocusBuff = true
     end
 
     -- If drinking mode is active, only heal in emergencies
@@ -737,29 +766,32 @@ local function HealParty()
             end
         end
 
-        -- Proactively cast Renew on players under 90% health
-        local unitsToCheck = {"player", "party1", "party2", "party3", "party4"}
-        for _, unit in ipairs(unitsToCheck) do
-            if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
-                local health = UnitHealth(unit) / UnitHealthMax(unit) * 100
-                if health < 90 and mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_RENEW, unit) then
-                    CastSpellByName(SPELL_RENEW)
-                    SpellTargetUnit(unit)
-                    return true
-                end
-            end
-        end
-
-        -- Cast Power Word: Shield on players under 80% health
-        for _, unit in ipairs(unitsToCheck) do
-            if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
-                local health = UnitHealth(unit) / UnitHealthMax(unit) * 100
-                if health < 80 and mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_PWS, unit) and not HasDebuff(unit, PWS_DEBUFF) and UnitAffectingCombat("player") then
-                    local spellIndex = GetSpellIndex(SPELL_PWS)
-                    if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
-                        CastSpellByName(SPELL_PWS)
+        -- If Inner Focus buff is active, skip Renew and Power Word: Shield
+        if not hasInnerFocusBuff then
+            -- Proactively cast Renew on players under 90% health
+            local unitsToCheck = {"player", "party1", "party2", "party3", "party4"}
+            for _, unit in ipairs(unitsToCheck) do
+                if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
+                    local health = UnitHealth(unit) / UnitHealthMax(unit) * 100
+                    if health < 90 and mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_RENEW, unit) then
+                        CastSpellByName(SPELL_RENEW)
                         SpellTargetUnit(unit)
                         return true
+                    end
+                end
+            end
+
+            -- Cast Power Word: Shield on players under 80% health
+            for _, unit in ipairs(unitsToCheck) do
+                if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
+                    local health = UnitHealth(unit) / UnitHealthMax(unit) * 100
+                    if health < 80 and mana > BANDAIDS_MANA_THRESHOLD and not buffed(SPELL_PWS, unit) and not HasDebuff(unit, PWS_DEBUFF) and UnitAffectingCombat("player") then
+                        local spellIndex = GetSpellIndex(SPELL_PWS)
+                        if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+                            CastSpellByName(SPELL_PWS)
+                            SpellTargetUnit(unit)
+                            return true
+                        end
                     end
                 end
             end
@@ -1039,6 +1071,8 @@ end
 local function OnEvent(self, event, ...)
     if event == "PLAYER_REGEN_ENABLED" then
         hasAnnouncedDrinking = false
+        lastDispelTime = 0
+        lastCureDiseaseTime = 0
     end
 end
 
@@ -1141,6 +1175,7 @@ SLASH_HERESY_CHAMP1 = "/heresy-champ"
 SlashCmdList["HERESY_CHAMP"] = function()
     if UnitExists("target") and UnitIsPlayer("target") then
         championName = UnitName("target")
+        leader = UnitName("target")
         print("" .. championName .. " has been designated as the champion!")
     else
         championName = nil
