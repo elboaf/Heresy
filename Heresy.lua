@@ -114,6 +114,7 @@ local debuffsToDispel = {
     "Taunt",
     "AnimateDead",
     "Shadow_Cripple",
+    "FrostArmor",
     -- Add more debuff names here as needed
 }
 
