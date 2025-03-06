@@ -60,9 +60,9 @@ local SPELL_RENEW = "Renew"
 local SPELL_SMITE = "Smite"
 local SPELL_SHOOT = "Shoot"
 local SPELL_SWP = "Shadow Word: Pain"
-local SPELL_SWP2 = "Shadow Word: Pain(Rank 7)"
+local SPELL_SWP2 = "Shadow Word: Pain(Rank 8)"
 local SPELL_MIND_BLAST = "Mind Blast"
-local SPELL_MIND_BLAST2 = "Mind Blast(Rank 8)"
+local SPELL_MIND_BLAST2 = "Mind Blast(Rank 9)"
 local SPELL_MIND_FLAY = "Mind Flay"
 local SPELL_QDM = "Quel'dorei Meditation"
 local SPELL_PWS = "Power Word: Shield"
@@ -112,6 +112,8 @@ local debuffsToDispel = {
     "Shaman_Hex",
     "SummonImp",
     "Taunt",
+    "AnimateDead",
+    "Shadow_Cripple",
     -- Add more debuff names here as needed
 }
 
