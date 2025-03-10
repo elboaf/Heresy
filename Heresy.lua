@@ -35,7 +35,7 @@ local isDrinkingNow = false -- Tracks if the player is currently drinking
 local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at this % mana
 local START_DRINKING_MANA_THRESHOLD = 60 -- Start drinking at this % mana
 local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below this % health even while drinking
-local HEALTH_THRESHOLD = 85 -- Heal if health is below this %
+local HEALTH_THRESHOLD = 95 -- Heal if health is below this %
 local BANDAIDS_MANA_THRESHOLD = 90 -- Use shield and renew if mana is above this %
 local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
 local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
@@ -49,7 +49,9 @@ local assistmode = 1 -- Tracks if assist mode is enabled (1 = on, 0 = off)
 
 -- Spell Constants
 local SPELL_PWF = "Power Word: Fortitude"
+local SPELL_POF = "Prayer of Fortitude"
 local SPELL_SPIRIT = "Divine Spirit"
+local SPELL_POSPIRIT = "Prayer of Spirit"
 local SPELL_SPROT = "Shadow Protection"
 local SPELL_FWARD = "Fear Ward"
 local SPELL_LESSER_HEAL = "Lesser Heal"
@@ -115,6 +117,7 @@ local debuffsToDispel = {
     "AnimateDead",
     "Shadow_Cripple",
     "FrostArmor",
+    "Shadow_Possession",
     -- Add more debuff names here as needed
 }
 
@@ -137,7 +140,8 @@ local drinkBuffs = {
 -- Table of mana potions to search for
 local manaPotions = {
     "Mana Potion",
-    -- Add more mana potion names here as needed
+    "Herbal Tea",
+    -- Add more mana potion names here dispe needed
 }
 
 -- Table of item buff mappings
@@ -391,16 +395,25 @@ end
 
 local function BuffUnit(unit)
     if not isDrinkingNow then
-        if BuffUnitWithSpell(unit, SPELL_PWF) then
-            return true
+        -- Skip Power Word: Fortitude if Prayer of Fortitude is active
+        if not buffed(SPELL_POF, unit) then
+            if BuffUnitWithSpell(unit, SPELL_PWF) then
+                return true
+            end
         end
-        if BuffUnitWithSpell(unit, SPELL_SPIRIT) then
-            return true
+
+        -- Skip Divine Spirit if Prayer of Spirit is active
+        if not buffed(SPELL_POSPIRIT, unit) then
+            if BuffUnitWithSpell(unit, SPELL_SPIRIT) then
+                return true
+            end
         end
+
         -- Only apply Shadow Protection if enabled
         if enableShadowProtection and BuffShadowProtection(unit) then
             return true
         end
+
         -- Only apply Fear Ward if enabled
         if enableFearWard and not buffed(SPELL_FWARD, unit) then
             local spellIndex = GetSpellIndex(SPELL_FWARD)
@@ -537,6 +550,14 @@ local function BuffParty()
             end
         end
 
+        -- Buff raid members
+        for i = 1, 40 do
+            local raidMember = "raid" .. i
+            if BuffUnit(raidMember) then
+                return false
+            end
+        end
+
         TargetByName(championName)
         local hasHolyChampion = buffed("Holy Champion", "target")
         ClearTarget()
@@ -546,7 +567,6 @@ local function BuffParty()
     end
 end
 
--- Function to buff party members with scrolls if available
 local function BuffPartyWithItems()
     if not isDrinkingNow then
         for itemName, itemData in pairs(itemBuffMap) do
@@ -602,6 +622,33 @@ local function BuffPartyWithItems()
                                     end
                                 end
                             end
+
+                            -- Buff raid members (if applicable)
+                            for i = 1, 40 do
+                                local raidMember = "raid" .. i
+                                if UnitExists(raidMember) and not UnitIsDeadOrGhost(raidMember) then
+                                    local shouldBuff = false
+
+                                    -- Check if the raid member should receive the buff based on targetType
+                                    if targetType == "both" then
+                                        shouldBuff = true
+                                    elseif targetType == "mana" and IsManaUser(raidMember) then
+                                        shouldBuff = true
+                                    elseif targetType == "non-mana" and not IsManaUser(raidMember) then
+                                        shouldBuff = true
+                                    end
+
+                                    -- Check if the raid member's class is allowed to receive this buff
+                                    local _, raidMemberClass = UnitClass(raidMember)
+                                    if shouldBuff and (not classes or tContains(classes, raidMemberClass)) then
+                                        -- Apply the buff if the raid member should receive it and doesn't already have it
+                                        if not HasItemBuff(raidMember, buffName) then
+                                            UseContainerItem(b, s)
+                                            SpellTargetUnit(raidMember)
+                                        end
+                                    end
+                                end
+                            end
                         end
                     end
                 end
@@ -627,6 +674,7 @@ local function DispelParty()
             end
         end
 
+        -- Check party members
         for i = 1, 4 do
             local partyMember = "party" .. i
             if HasDebuff(partyMember, debuffsToDispel) then
@@ -634,6 +682,20 @@ local function DispelParty()
                     ClearTarget()
                 end
                 if DispelUnit(partyMember) then
+                    lastDispelTime = currentTime
+                    return
+                end
+            end
+        end
+
+        -- Check raid members
+        for i = 1, 40 do
+            local raidMember = "raid" .. i
+            if HasDebuff(raidMember, debuffsToDispel) then
+                if UnitExists("target") and UnitCanAttack("player", "target") then
+                    ClearTarget()
+                end
+                if DispelUnit(raidMember) then
                     lastDispelTime = currentTime
                     return
                 end
@@ -659,6 +721,7 @@ local function CureDiseaseParty()
             end
         end
 
+        -- Check party members
         for i = 1, 4 do
             local partyMember = "party" .. i
             if HasDebuff(partyMember, diseasesToCure) then
@@ -666,6 +729,20 @@ local function CureDiseaseParty()
                     ClearTarget()
                 end
                 if CureDiseaseUnit(partyMember) then
+                    lastCureDiseaseTime = currentTime
+                    return
+                end
+            end
+        end
+
+        -- Check raid members
+        for i = 1, 40 do
+            local raidMember = "raid" .. i
+            if HasDebuff(raidMember, diseasesToCure) then
+                if UnitExists("target") and UnitCanAttack("player", "target") then
+                    ClearTarget()
+                end
+                if CureDiseaseUnit(raidMember) then
                     lastCureDiseaseTime = currentTime
                     return
                 end
@@ -730,6 +807,18 @@ local function HealParty()
             end
         end
 
+        -- Check raid members' health
+        for i = 1, 40 do
+            local raidMember = "raid" .. i
+            if UnitExists(raidMember) and not UnitIsDeadOrGhost(raidMember) and IsUnitInRange(raidMember) then
+                local health = UnitHealth(raidMember) / UnitHealthMax(raidMember) * 100
+                if health < lowestHealthPercent then
+                    lowestHealthUnit = raidMember
+                    lowestHealthPercent = health
+                end
+            end
+        end
+
         -- Heal the lowest health unit if below emergency threshold
         if lowestHealthUnit and lowestHealthPercent < EMERGENCY_HEALTH_THRESHOLD then
             local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
@@ -769,10 +858,25 @@ local function HealParty()
             end
         end
 
+        -- Check raid members' health
+        for i = 1, 40 do
+            local raidMember = "raid" .. i
+            if UnitExists(raidMember) and not UnitIsDeadOrGhost(raidMember) and IsUnitInRange(raidMember) then
+                local health = UnitHealth(raidMember) / UnitHealthMax(raidMember) * 100
+                if health < lowestHealthPercent then
+                    lowestHealthUnit = raidMember
+                    lowestHealthPercent = health
+                end
+            end
+        end
+
         -- If Inner Focus buff is active, skip Renew and Power Word: Shield
         if not hasInnerFocusBuff then
             -- Proactively cast Renew on players under 90% health
             local unitsToCheck = {"player", "party1", "party2", "party3", "party4"}
+            for i = 1, 40 do
+                table.insert(unitsToCheck, "raid" .. i)
+            end
             for _, unit in ipairs(unitsToCheck) do
                 if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and IsUnitInRange(unit) then
                     local health = UnitHealth(unit) / UnitHealthMax(unit) * 100
@@ -1108,6 +1212,20 @@ local function ResurrectDeadPartyMembers()
                 -- Cast Resurrection on the dead party member
                 CastSpellByName(resurrectionSpell)
                 SpellTargetUnit(partyMember)
+                return true
+            end
+        end
+    end
+
+    -- Iterate through raid members
+    for i = 1, 40 do
+        local raidMember = "raid" .. i
+        if UnitExists(raidMember) and UnitIsDeadOrGhost(raidMember) then
+            -- Check if the raid member is in range
+            if CheckInteractDistance(raidMember, 4) then
+                -- Cast Resurrection on the dead raid member
+                CastSpellByName(resurrectionSpell)
+                SpellTargetUnit(raidMember)
                 return true
             end
         end

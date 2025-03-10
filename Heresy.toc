@@ -2,7 +2,7 @@
 ## Title: Heresy
 ## Notes: A priest helper addon for World of Warcraft.
 ## Author: Elboaf
-## Version: 1.0.13
+## Version: 1.0.14
 ## SavedVariables: HeresyDB
 ##Dependencies: Quickheal
 Heresy.lua
