@@ -2,7 +2,8 @@
 -- This addon is designed to automate various tasks for a Priest in World of Warcraft, such as buffing, healing, dispelling, and assisting party members.
 
 Heresy = {}
-
+-- Configuration Variables
+local healSecondLowest = false -- Tracks if the priest should heal the 2nd lowest member
 -- Leader and Mount Configuration
 local leader = "Rele" -- The name of the party leader to follow
 local leaderMount = "Summon Warhorse" -- The mount spell used by the leader
@@ -36,7 +37,7 @@ local DRINKING_MANA_THRESHOLD = 80 -- Stop drinking at this % mana
 local START_DRINKING_MANA_THRESHOLD = 60 -- Start drinking at this % mana
 local EMERGENCY_HEALTH_THRESHOLD = 40 -- Heal party members below this % health even while drinking
 local HEALTH_THRESHOLD = 95 -- Heal if health is below this %
-local BANDAIDS_MANA_THRESHOLD = 90 -- Use shield and renew if mana is above this %
+local BANDAIDS_MANA_THRESHOLD = 95 -- Use shield and renew if mana is above this %
 local LOW_MANA_THRESHOLD = 10 -- Threshold for low mana
 local CRITICAL_MANA_THRESHOLD = 15 -- Threshold for critical mana
 local QDM_POT_MANA_THRESHOLD = 30 -- Threshold for using Quel'dorei Meditation or mana potions
@@ -118,6 +119,7 @@ local debuffsToDispel = {
     "Shadow_Cripple",
     "FrostArmor",
     "Shadow_Possession",
+    "SummonWaterElemental",
     -- Add more debuff names here as needed
 }
 
@@ -751,6 +753,44 @@ local function CureDiseaseParty()
     end
 end
 
+local function DispelHighPriorityDebuffs()
+
+        -- List of high-priority debuffs
+        local highPriorityDebuffs = {"Shaman_Hex", "Polymorph", "Shadow_Possession", "Nature_Sleep"}
+
+        -- Check party members for high-priority debuffs
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
+                if HasDebuff(partyMember, highPriorityDebuffs) then
+                    if UnitExists("target") and UnitCanAttack("player", "target") then
+                        ClearTarget()
+                    end
+                    if DispelUnit(partyMember) then
+                        return true -- A high-priority debuff was dispelled
+                    end
+                end
+            end
+        end
+
+        -- Check raid members for high-priority debuffs
+        for i = 1, 40 do
+            local raidMember = "raid" .. i
+            if UnitExists(raidMember) and not UnitIsDeadOrGhost(raidMember) then
+                if HasDebuff(raidMember, highPriorityDebuffs) then
+                    if UnitExists("target") and UnitCanAttack("player", "target") then
+                        ClearTarget()
+                    end
+                    if DispelUnit(raidMember) then
+                        return true -- A high-priority debuff was dispelled
+                    end
+                end
+            end
+        end
+
+    return false -- No high-priority debuffs were found or dispelled
+end
+
 local function HealParty()
     if master_buff then
         return false
@@ -759,6 +799,12 @@ local function HealParty()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
 
     CheckDrinkBuff()
+
+    -- Priority 1: Check for high-priority debuffs ("Shaman_Hex" and "Polymorph") and dispel them immediately
+    local highPriorityDebuffFound = DispelHighPriorityDebuffs()
+    if highPriorityDebuffFound then
+        return true -- Exit early if a high-priority debuff was dispelled
+    end
 
     -- If out of combat and mana is below 90%, do not heal
     if not UnitAffectingCombat("player") and mana < START_DRINKING_MANA_THRESHOLD then
@@ -771,7 +817,7 @@ local function HealParty()
     local hasInnerFocusBuff = buffed(SPELL_INNER_FOCUS, "player")
 
     -- Cast Inner Focus if mana is below 80% and it's ready
-    if mana < 60 and innerFocusReady and not hasInnerFocusBuff then
+    if mana < 30 and innerFocusReady and not hasInnerFocusBuff then
         CastSpellByName(SPELL_INNER_FOCUS)
         hasInnerFocusBuff = true
     end
@@ -784,14 +830,21 @@ local function HealParty()
         end
 
         local lowestHealthUnit = nil
+        local secondLowestHealthUnit = nil
         local lowestHealthPercent = EMERGENCY_HEALTH_THRESHOLD
+        local secondLowestHealthPercent = EMERGENCY_HEALTH_THRESHOLD
 
         -- Check player health
         if not UnitIsDeadOrGhost("player") and IsUnitInRange("player") then
             local playerHealth = UnitHealth("player") / UnitHealthMax("player") * 100
             if playerHealth < lowestHealthPercent then
+                secondLowestHealthUnit = lowestHealthUnit
+                secondLowestHealthPercent = lowestHealthPercent
                 lowestHealthUnit = "player"
                 lowestHealthPercent = playerHealth
+            elseif playerHealth < secondLowestHealthPercent then
+                secondLowestHealthUnit = "player"
+                secondLowestHealthPercent = playerHealth
             end
         end
 
@@ -801,8 +854,13 @@ local function HealParty()
             if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) and IsUnitInRange(partyMember) then
                 local health = UnitHealth(partyMember) / UnitHealthMax(partyMember) * 100
                 if health < lowestHealthPercent then
+                    secondLowestHealthUnit = lowestHealthUnit
+                    secondLowestHealthPercent = lowestHealthPercent
                     lowestHealthUnit = partyMember
                     lowestHealthPercent = health
+                elseif health < secondLowestHealthPercent then
+                    secondLowestHealthUnit = partyMember
+                    secondLowestHealthPercent = health
                 end
             end
         end
@@ -813,18 +871,24 @@ local function HealParty()
             if UnitExists(raidMember) and not UnitIsDeadOrGhost(raidMember) and IsUnitInRange(raidMember) then
                 local health = UnitHealth(raidMember) / UnitHealthMax(raidMember) * 100
                 if health < lowestHealthPercent then
+                    secondLowestHealthUnit = lowestHealthUnit
+                    secondLowestHealthPercent = lowestHealthPercent
                     lowestHealthUnit = raidMember
                     lowestHealthPercent = health
+                elseif health < secondLowestHealthPercent then
+                    secondLowestHealthUnit = raidMember
+                    secondLowestHealthPercent = health
                 end
             end
         end
 
-        -- Heal the lowest health unit if below emergency threshold
-        if lowestHealthUnit and lowestHealthPercent < EMERGENCY_HEALTH_THRESHOLD then
-            local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
+        -- Heal the lowest or 2nd lowest health unit based on the mode
+        local unitToHeal = healSecondLowest and secondLowestHealthUnit or lowestHealthUnit
+        if unitToHeal and (healSecondLowest and secondLowestHealthPercent < EMERGENCY_HEALTH_THRESHOLD or lowestHealthPercent < EMERGENCY_HEALTH_THRESHOLD) then
+            local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(unitToHeal, "channel", nil, false)
             if SpellID then
                 CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
-                SpellTargetUnit(lowestHealthUnit)
+                SpellTargetUnit(unitToHeal)
                 return true
             end
         end
@@ -833,16 +897,23 @@ local function HealParty()
     else
         -- Normal healing logic (not in drinking mode)
 
-        -- Track the lowest health unit for QuickHeal library
+        -- Track the two lowest health units for QuickHeal library
         local lowestHealthUnit = nil
+        local secondLowestHealthUnit = nil
         local lowestHealthPercent = 100
+        local secondLowestHealthPercent = 100
 
         -- Check player health
         if not UnitIsDeadOrGhost("player") and IsUnitInRange("player") then
             local playerHealth = UnitHealth("player") / UnitHealthMax("player") * 100
             if playerHealth < lowestHealthPercent then
+                secondLowestHealthUnit = lowestHealthUnit
+                secondLowestHealthPercent = lowestHealthPercent
                 lowestHealthUnit = "player"
                 lowestHealthPercent = playerHealth
+            elseif playerHealth < secondLowestHealthPercent then
+                secondLowestHealthUnit = "player"
+                secondLowestHealthPercent = playerHealth
             end
         end
 
@@ -852,8 +923,13 @@ local function HealParty()
             if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) and IsUnitInRange(partyMember) then
                 local health = UnitHealth(partyMember) / UnitHealthMax(partyMember) * 100
                 if health < lowestHealthPercent then
+                    secondLowestHealthUnit = lowestHealthUnit
+                    secondLowestHealthPercent = lowestHealthPercent
                     lowestHealthUnit = partyMember
                     lowestHealthPercent = health
+                elseif health < secondLowestHealthPercent then
+                    secondLowestHealthUnit = partyMember
+                    secondLowestHealthPercent = health
                 end
             end
         end
@@ -864,8 +940,13 @@ local function HealParty()
             if UnitExists(raidMember) and not UnitIsDeadOrGhost(raidMember) and IsUnitInRange(raidMember) then
                 local health = UnitHealth(raidMember) / UnitHealthMax(raidMember) * 100
                 if health < lowestHealthPercent then
+                    secondLowestHealthUnit = lowestHealthUnit
+                    secondLowestHealthPercent = lowestHealthPercent
                     lowestHealthUnit = raidMember
                     lowestHealthPercent = health
+                elseif health < secondLowestHealthPercent then
+                    secondLowestHealthUnit = raidMember
+                    secondLowestHealthPercent = health
                 end
             end
         end
@@ -904,12 +985,13 @@ local function HealParty()
             end
         end
 
-        -- Use QuickHeal library for the lowest health unit under 75% health
-        if lowestHealthUnit and lowestHealthPercent < 75 then
-            local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(lowestHealthUnit, "channel", nil, false)
+        -- Use QuickHeal library for the lowest or 2nd lowest health unit under 75% health
+        local unitToHeal = healSecondLowest and secondLowestHealthUnit or lowestHealthUnit
+        if unitToHeal and (healSecondLowest and secondLowestHealthPercent < 75 or lowestHealthPercent < 75) then
+            local SpellID, HealSize = QuickHeal_Priest_FindHealSpellToUse(unitToHeal, "channel", nil, false)
             if SpellID then
                 CastSpellByName(GetSpellName(SpellID, BOOKTYPE_SPELL))
-                SpellTargetUnit(lowestHealthUnit)
+                SpellTargetUnit(unitToHeal)
                 return true
             end
         end
@@ -1252,6 +1334,8 @@ local function AcceptResurrection()
     return false
 end
 
+
+
 -- Function to log boolean variables for debugging
 local function LogBooleanVariables()
     local booleanVariables = {
@@ -1360,9 +1444,24 @@ SlashCmdList["HERESY_CHAMPIONBUFF"] = function()
     end
 end
 
--- Main heresy slash command
+-- Slash command to toggle healing the 2nd lowest member
+SLASH_HERESY_HEALSECONDLOWEST1 = "/heresy-healsecondlowest"
+SlashCmdList["HERESY_HEALSECONDLOWEST"] = function()
+    healSecondLowest = not healSecondLowest
+    if healSecondLowest then
+        print("Healing the 2nd lowest member is now ENABLED.")
+    else
+        print("Healing the 2nd lowest member is now DISABLED.")
+    end
+end
+
 SLASH_HERESY1 = "/heresy"
 SlashCmdList["HERESY"] = function()
+    -- Priority 1: Check for high-priority debuffs ("Shaman_Hex" and "Polymorph") and dispel them immediately
+    local highPriorityDebuffFound = DispelHighPriorityDebuffs()
+    if highPriorityDebuffFound then
+        return -- Exit early if a high-priority debuff was dispelled
+    end
     if UnitIsDead("Player") then
         FollowPartyMember()
     end
@@ -1379,9 +1478,15 @@ SlashCmdList["HERESY"] = function()
         master_buff = false
     end
 
+
+    -- Priority 2: Healing (only if no high-priority debuffs were found)
     local healingNeeded = HealParty()
+
+    -- Priority 3: Other dispels and curing diseases
     DispelParty()
     CureDiseaseParty()
+
+    -- Priority 4: Out of mana logic
     OOM()
 
     if not healingNeeded then
