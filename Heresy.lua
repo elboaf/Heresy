@@ -11,6 +11,7 @@ local myMount = "Thalassian Unicorn" -- The mount spell used by the player
 local champBuff = "Empower Champion" -- The spell used to buff the champion
 local enableFollow = true -- Tracks if the follow functionality is enabled
 local enableChampionBuff = true -- Tracks if champion buffing is enabled
+local enableSmiteMode = true -- Tracks if Smite mode is enabled
 
 
 -- Configuration Variables for Optional Buffs
@@ -120,6 +121,8 @@ local debuffsToDispel = {
     "FrostArmor",
     "Shadow_Possession",
     "SummonWaterElemental",
+    "Nature_Cyclone",
+    "GolemThunderClap",
     -- Add more debuff names here as needed
 }
 
@@ -1000,7 +1003,6 @@ local function HealParty()
     end
 end
 
--- Function to assist a party member by casting Smite on their target
 local function AssistPartyMember()
     if mounted then
         return
@@ -1008,52 +1010,85 @@ local function AssistPartyMember()
     local mana = (UnitMana("player") / UnitManaMax("player")) * 100
     local currentTime = GetTime()
 
-    -- Check if "Mind Flay" is in the spell book
-    local hasMindFlay = GetSpellIndex("Mind Flay") ~= nil
+    if enableSmiteMode then
+        -- Smite mode: Only use Smite to assist, and wand if mana is below 75%
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
+                local target = partyMember .. "target"
+                if UnitExists(target) and UnitCanAttack("player", target) then
+                    AssistUnit(partyMember)
 
-    for i = 1, 4 do
-        local partyMember = "party" .. i
-        if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
-            local target = partyMember .. "target"
-            if UnitExists(target) and UnitCanAttack("player", target) then
-                AssistUnit(partyMember)
-
-                -- Apply Shadow Word: Pain if mana is sufficient
-                if mana > 75 and not buffed(SPELL_SWP, target) then
-                    CastSpellByName(SPELL_SWP2)
-                end
-
-                -- Cast Mind Blast if Shadow Word: Pain is active and Mind Blast is off cooldown
-                if buffed(SPELL_SWP, target) then
-                    local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
-                    if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
-                        ToggleShootOff()
-                        CastSpellByName(SPELL_MIND_BLAST2)
-                        lastShootToggleTime = currentTime
-                        return
+                    -- If mana is above 75%, cast Smite
+                    if mana > 75 then
+                        local smiteSpellIndex = GetSpellIndex(SPELL_SMITE)
+                        if smiteSpellIndex and GetSpellCooldown(smiteSpellIndex, BOOKTYPE_SPELL) < 1 then
+                            ToggleShootOff()
+                            CastSpellByName(SPELL_SMITE)
+                            lastShootToggleTime = currentTime
+                            return
+                        end
+                    else
+                        -- If mana is below 75%, toggle wand (Shoot)
+                        if IsShootActive() and (currentTime - lastShootToggleTime) >= SHOOT_TOGGLE_COOLDOWN then
+                            ToggleShootOff()
+                            lastShootToggleTime = currentTime
+                        elseif not IsShootActive() then
+                            CastSpellByName(SPELL_SHOOT)
+                            lastShootToggleTime = currentTime
+                        end
                     end
                 end
+            end
+        end
+    else
+        -- Original assist mode logic
+        local hasMindFlay = GetSpellIndex("Mind Flay") ~= nil
 
-                -- Cast Mind Flay if Shadow Word: Pain is active, Mind Blast is on cooldown, and Mind Flay is available
-                if buffed(SPELL_SWP, target) and hasMindFlay then
-                    local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
-                    if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) > 1 and (currentTime - lastFlayTime) >= FLAY_DURATION then
-                        ToggleShootOff()
-                        CastSpellByName(SPELL_MIND_FLAY)
-                        master_follow = false
-                        lastFlayTime = currentTime
-                        lastShootToggleTime = currentTime
-                        return
+        for i = 1, 4 do
+            local partyMember = "party" .. i
+            if UnitExists(partyMember) and not UnitIsDeadOrGhost(partyMember) then
+                local target = partyMember .. "target"
+                if UnitExists(target) and UnitCanAttack("player", target) then
+                    AssistUnit(partyMember)
+
+                    -- Apply Shadow Word: Pain if mana is sufficient
+                    if mana > 75 and not buffed(SPELL_SWP, target) then
+                        CastSpellByName(SPELL_SWP2)
                     end
-                end
 
-                -- Toggle Shoot if Mind Flay is not available or not used
-                if IsShootActive() and (currentTime - lastShootToggleTime) >= SHOOT_TOGGLE_COOLDOWN then
-                    ToggleShootOff()
-                    lastShootToggleTime = currentTime
-                elseif not IsShootActive() and (not hasMindFlay or (currentTime - lastFlayTime) >= FLAY_DURATION) then
-                    CastSpellByName(SPELL_SHOOT)
-                    lastShootToggleTime = currentTime
+                    -- Cast Mind Blast if Shadow Word: Pain is active and Mind Blast is off cooldown
+                    if buffed(SPELL_SWP, target) then
+                        local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
+                        if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) < 1 then
+                            ToggleShootOff()
+                            CastSpellByName(SPELL_MIND_BLAST2)
+                            lastShootToggleTime = currentTime
+                            return
+                        end
+                    end
+
+                    -- Cast Mind Flay if Shadow Word: Pain is active, Mind Blast is on cooldown, and Mind Flay is available
+                    if buffed(SPELL_SWP, target) and hasMindFlay then
+                        local spellIndex = GetSpellIndex(SPELL_MIND_BLAST)
+                        if spellIndex and GetSpellCooldown(spellIndex, BOOKTYPE_SPELL) > 1 and (currentTime - lastFlayTime) >= FLAY_DURATION then
+                            ToggleShootOff()
+                            CastSpellByName(SPELL_MIND_FLAY)
+                            master_follow = false
+                            lastFlayTime = currentTime
+                            lastShootToggleTime = currentTime
+                            return
+                        end
+                    end
+
+                    -- Toggle Shoot if Mind Flay is not available or not used
+                    if IsShootActive() and (currentTime - lastShootToggleTime) >= SHOOT_TOGGLE_COOLDOWN then
+                        ToggleShootOff()
+                        lastShootToggleTime = currentTime
+                    elseif not IsShootActive() and (not hasMindFlay or (currentTime - lastFlayTime) >= FLAY_DURATION) then
+                        CastSpellByName(SPELL_SHOOT)
+                        lastShootToggleTime = currentTime
+                    end
                 end
             end
         end
@@ -1452,6 +1487,17 @@ SlashCmdList["HERESY_HEALSECONDLOWEST"] = function()
         print("Healing the 2nd lowest member is now ENABLED.")
     else
         print("Healing the 2nd lowest member is now DISABLED.")
+    end
+end
+
+-- Slash command to toggle Smite mode
+SLASH_HERESY_SMITE1 = "/heresy-smite"
+SlashCmdList["HERESY_SMITE"] = function()
+    enableSmiteMode = not enableSmiteMode
+    if enableSmiteMode then
+        print("Smite mode is now ENABLED.")
+    else
+        print("Smite mode is now DISABLED.")
     end
 end
 
